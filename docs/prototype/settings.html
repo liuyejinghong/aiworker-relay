@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>设置 · AIworker</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到内容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><button class="workspace-switcher" type="button" aria-label="当前工作区"><span>个人工作区</span><span>⌄</span></button>
+      <p class="nav-label">工作台</p><nav><ul class="nav-list">
+        <li><a class="nav-link" href="./index.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/></svg>概览</a></li>
+        <li><a class="nav-link" href="./workers.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21c.6-4 2.9-6 7-6s6.4 2 7 6"/></svg>Worker</a></li>
+        <li><a class="nav-link" href="./runs.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2"/></svg>活动</a></li>
+        <li><a class="nav-link" href="./usage.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg>用量</a></li>
+        <li><a class="nav-link" aria-current="page" href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M5 12h14M12 5v14"/></svg>设置</a></li>
+      </ul></nav><div class="sidebar-foot"><div class="account"><span class="avatar">E</span><span>Ethan</span></div></div>
+    </aside>
+    <main class="main" id="content">
+      <header class="mobile-bar"><a class="mobile-brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><nav class="mobile-nav" aria-label="移动导航"><a href="./index.html">概览</a><a href="./workers.html">Worker</a><a href="./runs.html">活动</a><a href="./usage.html">用量</a></nav></header>
+      <div class="page">
+        <header class="topline"><div><p class="crumb">个人工作区</p><h1 data-pretext>设置你的工作方式。</h1><p class="page-subtitle">连接账户，并决定新任务的默认偏好。</p></div></header>
+        <section class="section settings-layout" aria-label="工作台设置">
+          <div style="display: grid; gap: 17px; align-content: start;">
+            <form class="card form-card" onsubmit="return false;"><h2>OpenRouter</h2><p class="form-intro">连接你的账户后，可以管理外部 Worker。</p><div class="field"><label for="api-key">API Key</label><input class="input" id="api-key" type="password" value="sk-or-v1••••••••8a1f" aria-describedby="key-note"></div><div class="form-actions"><button class="button" type="button" data-save-settings>保存设置</button><button class="button button-secondary" type="button">测试连接</button></div><p class="saved-note" id="key-note" data-save-note aria-live="polite"></p></form>
+            <section class="card form-card"><h2>新任务偏好</h2><p class="form-intro">你始终可以在任务开始前明确选择 Worker。</p><ul class="choice-list"><li class="choice"><input id="choice-you" name="choice" type="radio" checked><label for="choice-you"><strong>优先由我选择</strong><span>我明确指定时，直接使用我选择的 Worker。</span></label></li><li class="choice"><input id="choice-codex" name="choice" type="radio"><label for="choice-codex"><strong>由 Codex 提出建议</strong><span>需要时给出适合当前任务的选择建议。</span></label></li></ul></section>
+          </div>
+          <div style="display: grid; gap: 17px; align-content: start;">
+            <section class="card form-card"><h2>使用提醒</h2><div class="switch-line"><div class="switch-copy"><strong>接近月度额度时提醒我</strong><span>达到 80% 时显示提醒。</span></div><input class="switch" type="checkbox" checked aria-label="接近月度额度时提醒我"></div><div class="switch-line"><div class="switch-copy"><strong>显示数据保留信息</strong><span>选择外部 Worker 前显示对应说明。</span></div><input class="switch" type="checkbox" checked aria-label="显示数据保留信息"></div></section>
+            <section class="card form-card"><h2>停止偏好</h2><div class="switch-line"><div class="switch-copy"><strong>先请求正常结束</strong><span>任务未结束时先进行温和停止。</span></div><input class="switch" type="checkbox" checked aria-label="先请求正常结束"></div><div class="switch-line"><div class="switch-copy"><strong>立即终止前要求确认</strong><span>避免误停正在进行的任务。</span></div><input class="switch" type="checkbox" checked aria-label="立即终止前要求确认"></div></section>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script defer src="./app.js"></script>
+  <!-- FALLBACK: vendor/pretext.js missing, using CDN -->
+  <script type="module">
+    import { prepare, layout } from "https://esm.sh/@chenglou/pretext";
+    await document.fonts.ready;
+    const entries = [...document.querySelectorAll("[data-pretext]")].map((element) => [element, prepare(element.textContent, getComputedStyle(element).font)]);
+    const relayout = () => entries.forEach(([element, handle]) => { const result = layout(handle, element.clientWidth, parseFloat(getComputedStyle(element).lineHeight)); element.style.minHeight = `${result.height}px`; });
+    new ResizeObserver(relayout).observe(document.body); relayout();
+  </script>
+</body>
+</html>

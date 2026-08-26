@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>任务详情 · AIworker</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到内容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><button class="workspace-switcher" type="button" aria-label="当前工作区"><span>个人工作区</span><span>⌄</span></button>
+      <p class="nav-label">工作台</p><nav><ul class="nav-list">
+        <li><a class="nav-link" href="./index.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/></svg>概览</a></li>
+        <li><a class="nav-link" href="./workers.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21c.6-4 2.9-6 7-6s6.4 2 7 6"/></svg>Worker</a></li>
+        <li><a class="nav-link" aria-current="page" href="./runs.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2"/></svg>活动</a></li>
+        <li><a class="nav-link" href="./usage.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19v-7"/></svg>用量</a></li>
+        <li><a class="nav-link" href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M5 12h14M12 5v14"/></svg>设置</a></li>
+      </ul></nav><div class="sidebar-foot"><div class="account"><span class="avatar">E</span><span>Ethan</span></div></div>
+    </aside>
+    <main class="main" id="content">
+      <header class="mobile-bar"><a class="mobile-brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><nav class="mobile-nav" aria-label="移动导航"><a href="./index.html">概览</a><a href="./workers.html">Worker</a><a aria-current="page" href="./runs.html">活动</a><a href="./usage.html">用量</a></nav></header>
+      <div class="page">
+        <header class="topline"><div><p class="crumb"><a class="text-link" href="./runs.html">活动</a> · 任务详情</p><h1 data-pretext>整理开发环境中的测试约定</h1><p class="page-subtitle">由 Ox Alpha 处理 · 开始于今天 14:22</p></div><div class="top-actions"><button class="button button-danger" type="button" data-open-dialog="stop-dialog">停止任务</button></div></header>
+        <section class="section detail-layout" aria-label="任务状态">
+          <article class="card progress-card">
+            <span class="status status-running" data-run-status>进行中</span>
+            <h2 class="progress-title" data-progress-title>正在检查项目配置</h2>
+            <p class="progress-copy" data-progress-copy>已完成必要的前置信息整理，正在汇总测试约定。</p>
+            <div class="progress-line" aria-label="当前进度 64%"><span></span></div>
+            <div class="progress-foot"><span>大约 8 分钟</span><span>进度 64%</span></div>
+            <ul class="checklist" aria-label="任务进度">
+              <li>阅读现有项目结构</li>
+              <li>确认已有测试入口</li>
+              <li class="current">整理一致的测试约定</li>
+            </ul>
+          </article>
+          <div style="display: grid; gap: 17px; align-content: start;">
+            <aside class="card side-card"><h2>当前 Worker</h2><div class="data-pair"><span>名称</span><strong>Ox Alpha</strong></div><div class="data-pair"><span>类别</span><strong>外部 Worker</strong></div><div class="data-pair"><span>内存使用</span><strong>214 MB</strong></div></aside>
+            <aside class="card side-card"><h2>任务范围</h2><div class="data-pair"><span>工作目录</span><strong>当前项目</strong></div><div class="data-pair"><span>完成后</span><strong>带回结果</strong></div></aside>
+            <aside class="card danger-zone"><h2>需要停止？</h2><p>会先请求正常结束；若仍未结束，你可以再选择立即终止。</p><button class="button button-danger button-small" type="button" data-open-dialog="stop-dialog">停止任务</button></aside>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <dialog id="stop-dialog" aria-labelledby="stop-title">
+    <div class="dialog-body">
+      <div data-stop-first><h2 id="stop-title">停止这个任务？</h2><p>会先请求正常结束。如果任务仍未结束，你可以在下一步选择立即终止。</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-close-dialog>继续运行</button><button class="button button-danger" type="button" data-confirm-stop>请求结束</button></div></div>
+      <div data-stop-force hidden><h2>任务仍在结束</h2><p>你可以继续等待，或确认立即终止。立即终止后会显示实际处理结果。</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-close-dialog>继续等待</button><button class="button button-danger" type="button" data-force-stop>立即终止</button></div></div>
+    </div>
+  </dialog>
+  <script defer src="./app.js"></script>
+  <!-- FALLBACK: vendor/pretext.js missing, using CDN -->
+  <script type="module">
+    import { prepare, layout } from "https://esm.sh/@chenglou/pretext";
+    await document.fonts.ready;
+    const entries = [...document.querySelectorAll("[data-pretext]")].map((element) => [element, prepare(element.textContent, getComputedStyle(element).font)]);
+    const relayout = () => entries.forEach(([element, handle]) => { const result = layout(handle, element.clientWidth, parseFloat(getComputedStyle(element).lineHeight)); element.style.minHeight = `${result.height}px`; });
+    new ResizeObserver(relayout).observe(document.body); relayout();
+  </script>
+</body>
+</html>

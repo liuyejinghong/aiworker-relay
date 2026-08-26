@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>概览 · AIworker</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到内容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a>
+      <button class="workspace-switcher" type="button" aria-label="当前工作区"><span>个人工作区</span><span>⌄</span></button>
+      <p class="nav-label">工作台</p>
+      <nav>
+        <ul class="nav-list">
+          <li><a class="nav-link" aria-current="page" href="./index.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>概览</a></li>
+          <li><a class="nav-link" href="./workers.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21c.6-4 2.9-6 7-6s6.4 2 7 6"/></svg>Worker</a></li>
+          <li><a class="nav-link" href="./runs.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2"/></svg>活动</a></li>
+          <li><a class="nav-link" href="./usage.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg>用量</a></li>
+          <li><a class="nav-link" href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.1 2.1-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2h-3v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.1-2.1.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H5v-3h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.1-2.1.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V4h3v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.1 2.1-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2v3h-.2a1.7 1.7 0 0 0-1.4 1.5Z"/></svg>设置</a></li>
+        </ul>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="account"><span class="avatar">E</span><span>Ethan</span></div>
+      </div>
+    </aside>
+
+    <main class="main" id="content">
+      <header class="mobile-bar">
+        <a class="mobile-brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a>
+        <nav class="mobile-nav" aria-label="移动导航"><a aria-current="page" href="./index.html">概览</a><a href="./workers.html">Worker</a><a href="./runs.html">活动</a><a href="./usage.html">用量</a></nav>
+      </header>
+      <div class="page">
+        <header class="topline">
+          <div>
+            <p class="crumb">个人工作区 · 8 月 25 日</p>
+            <h1 data-pretext>今天的工作，一目了然。</h1>
+          </div>
+          <div class="top-actions"><a class="button button-secondary" href="./usage.html">查看用量</a><a class="button" href="./workers.html">管理 Worker</a></div>
+        </header>
+
+        <section class="section" aria-labelledby="today-heading">
+          <div class="section-head"><h2 class="section-title" id="today-heading">今天</h2><p class="section-note">持续关注真正需要你介入的事。</p></div>
+          <div class="metric-grid">
+            <article class="metric"><span class="metric-label">正在进行</span><strong class="metric-value">1</strong><span class="metric-foot"><strong>Ox Alpha</strong> 正在处理</span></article>
+            <article class="metric"><span class="metric-label">可以使用</span><strong class="metric-value">4</strong><span class="metric-foot">其中 2 个由 Codex 管理</span></article>
+            <article class="metric"><span class="metric-label">本周用量</span><strong class="metric-value">¥ 12.48</strong><span class="metric-foot"><strong>25%</strong> 的月度额度</span></article>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="active-heading">
+          <div class="section-head"><h2 class="section-title" id="active-heading">正在进行</h2><a class="text-link" href="./runs.html">查看全部活动</a></div>
+          <div class="grid-two">
+            <article class="card active-run">
+              <div class="run-kicker"><span class="status status-running">进行中</span><span>开始于 14:22</span></div>
+              <h2 class="run-name">整理开发环境中的测试约定</h2>
+              <div class="run-meta"><span>Ox Alpha</span><span>已进行 8 分钟</span></div>
+              <div class="run-actions"><span class="section-note">完成后会带回结果。</span><a class="button" href="./run-detail.html">查看任务</a></div>
+            </article>
+            <aside class="card quiet-card" aria-label="下一步">
+              <h2>接下来</h2>
+              <p>这项任务完成后，先确认结果，再决定是否继续下一步。</p>
+              <ol class="mini-steps"><li>查看任务结果</li><li>确认改动范围</li><li>开始下一项工作</li></ol>
+            </aside>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="recent-heading">
+          <div class="section-head"><h2 class="section-title" id="recent-heading">最近完成</h2><a class="text-link" href="./runs.html">活动记录</a></div>
+          <div class="card list-card">
+            <article class="list-row"><div><h3 class="row-title">梳理 API 错误提示</h3><div class="row-meta"><span>Luna Medium</span><span>已完成</span></div></div><time class="row-time">11:48</time></article>
+            <article class="list-row"><div><h3 class="row-title">检查依赖升级的影响</h3><div class="row-meta"><span>Muse Spark 1.2</span><span>已完成</span></div></div><time class="row-time">昨天</time></article>
+            <article class="list-row"><div><h3 class="row-title">归纳数据库迁移的风险点</h3><div class="row-meta"><span>Luna Max</span><span>已完成</span></div></div><time class="row-time">昨天</time></article>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script defer src="./app.js"></script>
+  <!-- FALLBACK: vendor/pretext.js missing, using CDN -->
+  <script type="module">
+    import { prepare, layout } from "https://esm.sh/@chenglou/pretext";
+    await document.fonts.ready;
+    const entries = [...document.querySelectorAll("[data-pretext]")].map((element) => [element, prepare(element.textContent, getComputedStyle(element).font)]);
+    const relayout = () => entries.forEach(([element, handle]) => { const result = layout(handle, element.clientWidth, parseFloat(getComputedStyle(element).lineHeight)); element.style.minHeight = `${result.height}px`; });
+    new ResizeObserver(relayout).observe(document.body);
+    relayout();
+  </script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-orchestrator"
+dynamic = ["version"]
+description = "A Codex-led, CLI-first coding-agent orchestrator."
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.9,<4",
+    "psutil>=5.9,<8",
+    "keyring>=25,<26",
+    "truststore>=0.10,<1",
+]
+
+[project.scripts]
+orch = "orchestrator.cli:main"
+external-workersd = "orchestrator.daemon:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "orchestrator.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+orchestrator = ["web/*.html", "web/*.css", "web/*.js"]

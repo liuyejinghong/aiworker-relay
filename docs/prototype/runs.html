@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>活动 · AIworker</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到内容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><button class="workspace-switcher" type="button" aria-label="当前工作区"><span>个人工作区</span><span>⌄</span></button>
+      <p class="nav-label">工作台</p><nav><ul class="nav-list">
+        <li><a class="nav-link" href="./index.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/></svg>概览</a></li>
+        <li><a class="nav-link" href="./workers.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21c.6-4 2.9-6 7-6s6.4 2 7 6"/></svg>Worker</a></li>
+        <li><a class="nav-link" aria-current="page" href="./runs.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2"/></svg>活动</a></li>
+        <li><a class="nav-link" href="./usage.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg>用量</a></li>
+        <li><a class="nav-link" href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M5 12h14M12 5v14"/></svg>设置</a></li>
+      </ul></nav><div class="sidebar-foot"><div class="account"><span class="avatar">E</span><span>Ethan</span></div></div>
+    </aside>
+    <main class="main" id="content">
+      <header class="mobile-bar"><a class="mobile-brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><nav class="mobile-nav" aria-label="移动导航"><a href="./index.html">概览</a><a href="./workers.html">Worker</a><a aria-current="page" href="./runs.html">活动</a><a href="./usage.html">用量</a></nav></header>
+      <div class="page">
+        <header class="topline"><div><p class="crumb">个人工作区</p><h1 data-pretext>每项工作，都有清晰的去向。</h1><p class="page-subtitle">查看正在进行、已完成和需要你决定的任务。</p></div><div class="top-actions"><a class="button button-secondary" href="./workers.html">选择 Worker</a></div></header>
+        <section class="section" aria-labelledby="activity-heading">
+          <div class="filter-row"><div><h2 class="section-title" id="activity-heading">全部活动</h2><p class="section-note">最近 7 天</p></div><div class="filter-group" aria-label="活动筛选"><button class="filter" type="button" aria-pressed="true">全部</button><button class="filter" type="button" aria-pressed="false">进行中</button><button class="filter" type="button" aria-pressed="false">已完成</button></div></div>
+          <div class="card activity-list" style="margin-top: 15px;">
+            <a class="activity-row" href="./run-detail.html"><span class="status status-running">进行中</span><div class="activity-main"><span class="activity-name">整理开发环境中的测试约定</span><span class="activity-sub">正在检查项目配置</span></div><span class="activity-worker">Ox Alpha</span><time class="activity-time">8 分钟</time></a>
+            <div class="activity-row"><span class="status status-finished">已完成</span><div class="activity-main"><span class="activity-name">梳理 API 错误提示</span><span class="activity-sub">结果已带回，等待确认</span></div><span class="activity-worker">Luna Medium</span><time class="activity-time">11:48</time></div>
+            <div class="activity-row"><span class="status status-finished">已完成</span><div class="activity-main"><span class="activity-name">检查依赖升级的影响</span><span class="activity-sub">结果已带回，等待确认</span></div><span class="activity-worker">Muse Spark 1.2</span><time class="activity-time">昨天</time></div>
+            <div class="activity-row"><span class="status status-stopped">已停止</span><div class="activity-main"><span class="activity-name">探索旧版组件的迁移路径</span><span class="activity-sub">已按你的要求结束</span></div><span class="activity-worker">Gemini 3.7 Flash</span><time class="activity-time">昨天</time></div>
+            <div class="activity-row"><span class="status status-finished">已完成</span><div class="activity-main"><span class="activity-name">归纳数据库迁移的风险点</span><span class="activity-sub">结果已带回，等待确认</span></div><span class="activity-worker">Luna Max</span><time class="activity-time">8 月 23 日</time></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script defer src="./app.js"></script>
+  <!-- FALLBACK: vendor/pretext.js missing, using CDN -->
+  <script type="module">
+    import { prepare, layout } from "https://esm.sh/@chenglou/pretext";
+    await document.fonts.ready;
+    const entries = [...document.querySelectorAll("[data-pretext]")].map((element) => [element, prepare(element.textContent, getComputedStyle(element).font)]);
+    const relayout = () => entries.forEach(([element, handle]) => { const result = layout(handle, element.clientWidth, parseFloat(getComputedStyle(element).lineHeight)); element.style.minHeight = `${result.height}px`; });
+    new ResizeObserver(relayout).observe(document.body); relayout();
+  </script>
+</body>
+</html>

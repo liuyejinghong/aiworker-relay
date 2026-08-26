@@ -1,0 +1,14 @@
+# Non-secret, isolated configuration used only for the initial route probe.
+# The product's persistent configuration will be managed from its local Web UI.
+model_provider = "openrouter"
+model = "stealth/ox-alpha"
+model_reasoning_effort = "low"
+
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+wire_api = "responses"
+
+[model_providers.openrouter.auth]
+command = "sh"
+args = ["-c", "printf '%s' \"$OPENROUTER_API_KEY\""]

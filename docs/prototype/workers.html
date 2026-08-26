@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Worker · AIworker</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到内容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a>
+      <button class="workspace-switcher" type="button" aria-label="当前工作区"><span>个人工作区</span><span>⌄</span></button>
+      <p class="nav-label">工作台</p>
+      <nav><ul class="nav-list">
+        <li><a class="nav-link" href="./index.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>概览</a></li>
+        <li><a class="nav-link" aria-current="page" href="./workers.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21c.6-4 2.9-6 7-6s6.4 2 7 6"/></svg>Worker</a></li>
+        <li><a class="nav-link" href="./runs.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2"/></svg>活动</a></li>
+        <li><a class="nav-link" href="./usage.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg>用量</a></li>
+        <li><a class="nav-link" href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M5 12h14M12 5v14"/></svg>设置</a></li>
+      </ul></nav>
+      <div class="sidebar-foot"><div class="account"><span class="avatar">E</span><span>Ethan</span></div></div>
+    </aside>
+    <main class="main" id="content">
+      <header class="mobile-bar"><a class="mobile-brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><nav class="mobile-nav" aria-label="移动导航"><a href="./index.html">概览</a><a aria-current="page" href="./workers.html">Worker</a><a href="./runs.html">活动</a><a href="./usage.html">用量</a></nav></header>
+      <div class="page">
+        <header class="topline"><div><p class="crumb">个人工作区</p><h1 data-pretext>选择现在值得使用的 Worker。</h1><p class="page-subtitle">冻结不会中断已经开始的任务，只影响之后的新任务。</p></div><div class="top-actions"><a class="button" href="./add-worker.html">添加 Worker</a></div></header>
+
+        <section class="section" aria-labelledby="external-heading">
+          <div class="section-head"><div><h2 class="section-title" id="external-heading">外部 Worker</h2><p class="section-note">由你的设置决定是否可以接收新任务。</p></div><div class="filter-group" aria-label="Worker 筛选"><button class="filter" type="button" aria-pressed="true">全部</button><button class="filter" type="button" aria-pressed="false">可用</button><button class="filter" type="button" aria-pressed="false">已冻结</button></div></div>
+          <div class="worker-grid">
+            <article class="worker-card"><div class="worker-top"><span class="worker-mark">OX</span><span class="status status-running">可用</span></div><h3 class="worker-name">Ox Alpha</h3><p class="worker-kind">快速探索 · 默认 Max 推理</p><div class="worker-detail"><span>本周用量 <strong>¥ 0.00</strong></span><span>最近使用 <strong>12 分钟前</strong></span></div><div class="worker-foot"><a class="text-link" href="./worker-detail.html">查看详情</a><button class="button button-secondary button-small worker-control" type="button" data-freeze data-state="enabled">冻结</button></div></article>
+            <article class="worker-card"><div class="worker-top"><span class="worker-mark">G3</span><span class="status status-frozen">已冻结</span></div><h3 class="worker-name">Gemini 3.7 Flash</h3><p class="worker-kind">快速交付 · 默认高推理</p><div class="worker-detail"><span>本周用量 <strong>¥ 2.61</strong></span><span>最近使用 <strong>昨天</strong></span></div><div class="worker-foot"><a class="text-link" href="./gemini-detail.html">查看详情</a><button class="button button-secondary button-small worker-control" type="button" data-freeze data-state="frozen">激活</button></div></article>
+            <article class="worker-card"><div class="worker-top"><span class="worker-mark">MS</span><span class="status status-running">可用</span></div><h3 class="worker-name">Muse Spark 1.2</h3><p class="worker-kind">深度编码 · 适合完整实现</p><div class="worker-detail"><span>本周用量 <strong>¥ 9.87</strong></span><span>最近使用 <strong>昨天</strong></span></div><div class="worker-foot"><span class="section-note">外部 Worker</span><button class="button button-secondary button-small worker-control" type="button" data-freeze data-state="enabled">冻结</button></div></article>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="native-heading">
+          <div class="section-head"><div><h2 class="section-title" id="native-heading">Codex 原生 Worker</h2><p class="section-note">这些 Worker 由 Codex 运行与管理。</p></div></div>
+          <div class="worker-grid">
+            <article class="worker-card"><div class="worker-top"><span class="worker-mark native">LM</span><span class="status status-finished">已配置</span></div><h3 class="worker-name">Luna Medium</h3><p class="worker-kind">适合清晰、范围明确的工作</p><div class="worker-detail"><span>运行方式 <strong>Codex 管理</strong></span><span>推理档位 <strong>Medium</strong></span></div><div class="worker-foot"><span class="section-note">原生 Worker</span></div></article>
+            <article class="worker-card"><div class="worker-top"><span class="worker-mark native">LX</span><span class="status status-finished">已配置</span></div><h3 class="worker-name">Luna Max</h3><p class="worker-kind">适合需要独立深度判断的工作</p><div class="worker-detail"><span>运行方式 <strong>Codex 管理</strong></span><span>推理档位 <strong>Max</strong></span></div><div class="worker-foot"><span class="section-note">原生 Worker</span></div></article>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script defer src="./app.js"></script>
+  <!-- FALLBACK: vendor/pretext.js missing, using CDN -->
+  <script type="module">
+    import { prepare, layout } from "https://esm.sh/@chenglou/pretext";
+    await document.fonts.ready;
+    const entries = [...document.querySelectorAll("[data-pretext]")].map((element) => [element, prepare(element.textContent, getComputedStyle(element).font)]);
+    const relayout = () => entries.forEach(([element, handle]) => { const result = layout(handle, element.clientWidth, parseFloat(getComputedStyle(element).lineHeight)); element.style.minHeight = `${result.height}px`; });
+    new ResizeObserver(relayout).observe(document.body); relayout();
+  </script>
+</body>
+</html>

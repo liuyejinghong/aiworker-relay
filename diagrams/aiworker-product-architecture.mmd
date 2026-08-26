@@ -1,0 +1,43 @@
+flowchart TB
+    developer["开发者"]
+    plugin["AIworker Relay Plugin"]
+    skill["aiworker-relay Skill"]
+
+    subgraph orchestration["Codex 控制"]
+        direction LR
+        sol["Codex / Sol<br/>判断、拆解、建议"]
+        packet["Task Packet<br/>最小上下文与验收条件"]
+        sol --> packet
+    end
+
+    subgraph control["开发者本机控制面"]
+        direction LR
+        setup["$aiworker-relay setup<br/>启动本机控制面"]
+        dashboard["external-workersd<br/>本机 Web、SSE、进程监管"]
+        profile{"Profile 已启用<br/>且未冻结？"}
+        setup --> dashboard --> profile
+    end
+
+    refused["拒绝派发<br/>说明 Profile 已冻结"]
+
+    subgraph execution["派生执行"]
+        direction LR
+        native["原生 Worker<br/>由 Codex 管理"]
+        external["外部 Run<br/>隔离 Codex CLI / PGID"]
+        gateway["OpenRouter"]
+        model["选定外部模型"]
+        external --> gateway --> model
+    end
+
+    evidence["劳动与证据<br/>diff、tests、退出、token、费用状态"]
+    acceptance["Codex / Sol<br/>基于证据验收"]
+
+    developer -->|在 Codex 安装| plugin --> skill
+    skill -->|提供受控派发能力| sol
+    skill -->|首次打开| setup
+    packet --> profile
+    profile -->|冻结| refused
+    profile -->|原生| native --> evidence
+    profile -->|外部| external
+    dashboard -->|启动、采样、停止| external
+    external --> evidence --> acceptance

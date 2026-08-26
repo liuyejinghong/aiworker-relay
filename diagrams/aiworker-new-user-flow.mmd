@@ -1,0 +1,15 @@
+flowchart TB
+    install["安装 AIworker Relay Plugin<br/>包含 aiworker-relay Skill"]
+    setup["新 task 调用<br/>$aiworker-relay setup<br/>启动控制面并打开 Web"]
+    connect["在 Web 配置<br/>OpenRouter API Key"]
+    profile["在 Web 添加 Profile<br/>默认推理与启用状态"]
+    task["像平时一样向 Codex 提任务"]
+    eligible{"Profile 已启用？"}
+    refused["拒绝派发<br/>该模型已冻结"]
+    run["隔离执行外部 Run"]
+    observe["查看状态、用量、进程<br/>必要时停止"]
+    accept["Codex 基于证据验收"]
+
+    install --> setup --> connect --> profile --> task --> eligible
+    eligible -->|冻结| refused
+    eligible -->|启用| run --> observe --> accept

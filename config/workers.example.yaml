@@ -1,0 +1,3 @@
+# Intentionally empty during bootstrap.
+# No configuration loader reads this file yet.
+# Add worker entries only after a concrete worker CLI and result contract are agreed.

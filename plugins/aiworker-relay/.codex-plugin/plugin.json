@@ -1,0 +1,24 @@
+{
+  "name": "aiworker-relay",
+  "version": "0.1.1",
+  "description": "Locally managed OpenRouter coding workers for Codex.",
+  "author": {
+    "name": "AIworker"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AIworker Relay",
+    "shortDescription": "OpenRouter coding workers, directed by Codex.",
+    "longDescription": "Add external coding workers locally, choose the model, and let Codex delegate bounded work with isolated runs and final review.",
+    "developerName": "AIworker",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Set up AIworker Relay with OpenRouter.",
+      "Prepare a bounded coding task for an AIworker Relay profile."
+    ]
+  }
+}

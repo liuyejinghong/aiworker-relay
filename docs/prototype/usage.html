@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>用量 · AIworker</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到内容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><button class="workspace-switcher" type="button" aria-label="当前工作区"><span>个人工作区</span><span>⌄</span></button>
+      <p class="nav-label">工作台</p><nav><ul class="nav-list">
+        <li><a class="nav-link" href="./index.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/></svg>概览</a></li>
+        <li><a class="nav-link" href="./workers.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21c.6-4 2.9-6 7-6s6.4 2 7 6"/></svg>Worker</a></li>
+        <li><a class="nav-link" href="./runs.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2"/></svg>活动</a></li>
+        <li><a class="nav-link" aria-current="page" href="./usage.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg>用量</a></li>
+        <li><a class="nav-link" href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M5 12h14M12 5v14"/></svg>设置</a></li>
+      </ul></nav><div class="sidebar-foot"><div class="account"><span class="avatar">E</span><span>Ethan</span></div></div>
+    </aside>
+    <main class="main" id="content">
+      <header class="mobile-bar"><a class="mobile-brand" href="./index.html"><span class="brand-mark">A</span><span>AIworker</span></a><nav class="mobile-nav" aria-label="移动导航"><a href="./index.html">概览</a><a href="./workers.html">Worker</a><a href="./runs.html">活动</a><a aria-current="page" href="./usage.html">用量</a></nav></header>
+      <div class="page">
+        <header class="topline"><div><p class="crumb">个人工作区</p><h1 data-pretext>看清每一笔使用，决定下一步。</h1><p class="page-subtitle">费用与额度按你的时间范围汇总。</p></div><div class="top-actions"><select class="select" aria-label="时间范围"><option>本月</option><option>上月</option><option>本周</option></select></div></header>
+        <section class="section" aria-label="本月用量">
+          <div class="card usage-hero"><div class="usage-total"><span class="usage-label">本月已使用</span><p class="usage-number">¥ 12.48 <small>/ ¥ 50.00</small></p><p class="usage-caption">较上月同期减少 ¥ 3.20</p></div><div class="budget-pane"><div class="budget-top"><span>月度额度</span><strong>25%</strong></div><div class="budget-track" aria-label="已使用 25%"><span></span></div><p class="budget-note">还有 ¥ 37.52 可用</p></div></div>
+        </section>
+        <section class="section" aria-labelledby="by-worker-heading"><div class="section-head"><div><h2 class="section-title" id="by-worker-heading">按 Worker 查看</h2><p class="section-note">本月累计</p></div></div><div class="card"><div class="usage-row"><span class="usage-name">Muse Spark 1.2</span><div class="usage-bar"><span style="width: 79%;"></span></div><span class="usage-cost">¥ 9.87</span></div><div class="usage-row"><span class="usage-name">Gemini 3.7 Flash</span><div class="usage-bar"><span style="width: 21%;"></span></div><span class="usage-cost">¥ 2.61</span></div><div class="usage-row"><span class="usage-name">Ox Alpha</span><div class="usage-bar"><span style="width: 2%;"></span></div><span class="usage-cost">¥ 0.00</span></div></div></section>
+        <section class="section" aria-labelledby="recent-cost-heading"><div class="section-head"><div><h2 class="section-title" id="recent-cost-heading">最近用量</h2><p class="section-note">按完成时间排列</p></div></div><div class="card list-card"><article class="list-row"><div><h3 class="row-title">检查依赖升级的影响</h3><div class="row-meta"><span>Muse Spark 1.2</span><span>昨天</span></div></div><strong class="usage-cost">¥ 1.82</strong></article><article class="list-row"><div><h3 class="row-title">归纳数据库迁移的风险点</h3><div class="row-meta"><span>Luna Max</span><span>8 月 23 日</span></div></div><strong class="usage-cost">包含在 Codex 额度内</strong></article></div></section>
+      </div>
+    </main>
+  </div>
+  <script defer src="./app.js"></script>
+  <!-- FALLBACK: vendor/pretext.js missing, using CDN -->
+  <script type="module">
+    import { prepare, layout } from "https://esm.sh/@chenglou/pretext";
+    await document.fonts.ready;
+    const entries = [...document.querySelectorAll("[data-pretext]")].map((element) => [element, prepare(element.textContent, getComputedStyle(element).font)]);
+    const relayout = () => entries.forEach(([element, handle]) => { const result = layout(handle, element.clientWidth, parseFloat(getComputedStyle(element).lineHeight)); element.style.minHeight = `${result.height}px`; });
+    new ResizeObserver(relayout).observe(document.body); relayout();
+  </script>
+</body>
+</html>
