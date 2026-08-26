@@ -437,7 +437,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         if args.command == "setup":
             if status.get("update_status") in {"runtime_missing", "update_required"}:
-                print("aiworker-relay: preparing the local control plane...")
+                print("aiworker-relay: preparing the local control plane...", flush=True)
             orch, deferred = reconcile_runtime()
             if deferred:
                 print(f"aiworker-relay: {deferred}")
