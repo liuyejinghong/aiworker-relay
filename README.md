@@ -44,7 +44,7 @@ The developer's explicit model and reasoning choice always wins. A Codex recomme
 
 ## Current release status
 
-**Pre-release.** The Git-backed Marketplace CLI path has completed a clean install and two bundle updates, and explicit setup has converged the bundle, local runtime, and daemon versions. v0.1.9 also fixes the non-interactive Codex approval path: the exact NVIDIA model completed a real tool-capable CLI write in an isolated worktree. The first dashboard-managed v0.1.9 write then received the free model's OpenRouter `429 Too Many Requests`, which was recorded as a failure rather than hidden or retried. A successful post-fix managed write is therefore still required before a release claim; no tag or public release has been created.
+**Pre-release.** The Git-backed Marketplace CLI path has completed a clean current-v0.1.9 install and prior bundle updates, and explicit setup has converged the bundle, local runtime, and daemon versions. v0.1.9 also fixes the non-interactive Codex approval path: the exact NVIDIA model completed a real tool-capable CLI write in an isolated worktree. The first dashboard-managed v0.1.9 write then received the free model's OpenRouter `429 Too Many Requests`, which was recorded as a failure rather than hidden or retried. A successful post-fix managed write is therefore still required before a release claim; no tag or public release has been created.
 
 Source repository: [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay). The documented Git marketplace CLI flow has been observed end to end; that does not by itself establish every Codex Desktop update interaction or a public release.
 

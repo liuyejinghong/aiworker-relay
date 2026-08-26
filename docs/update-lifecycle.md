@@ -131,7 +131,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 1. 用户在 Codex 中刷新 marketplace 并接受可用的 Plugin 更新；
 2. 用户下次需要本地控制面时执行 `$aiworker-relay setup`，它完成应用级 runtime 收敛。
 
-公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。2026-08-26 的干净隔离验收已实际执行上述安装路径，并从 `0.1.6` 连续升级至 `0.1.7`、`0.1.8`；每次显式 setup 后 bundle、runtime 与 daemon 都报告一致版本。它验证的是 CLI marketplace 路径，不把未单独观察的 Codex Desktop 更新交互写成既成事实。本提案不添加自研 updater 来绕开 Codex 的安装面。
+公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。2026-08-26 的干净隔离验收已实际执行上述安装路径，并从 `0.1.6` 连续升级至 `0.1.7`、`0.1.8`；推送后又从同一 Git marketplace 全新安装当前 `0.1.9`。每次显式 setup 后 bundle、runtime 与 daemon 都报告一致版本。它验证的是 CLI marketplace 路径，不把未单独观察的 Codex Desktop 更新交互写成既成事实。本提案不添加自研 updater 来绕开 Codex 的安装面。
 
 ## 实施包与文件责任
 

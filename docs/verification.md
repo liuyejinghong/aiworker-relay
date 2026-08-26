@@ -55,7 +55,7 @@
 
 | 验证点 | 结果 | 证据与边界 |
 | --- | --- | --- |
-| Git-backed marketplace 安装与更新 | 通过 | 在干净隔离 `CODEX_HOME` 中添加 `liuyejinghong/aiworker-relay` marketplace、安装 `0.1.6`，并连续升级至 `0.1.7`、`0.1.8`；每次 setup 后 bundle/runtime/daemon 版本一致。该证据不声称未观察到的 Desktop UI 更新行为。 |
+| Git-backed marketplace 安装与更新 | 通过 | 在干净隔离 `CODEX_HOME` 中添加 `liuyejinghong/aiworker-relay` marketplace、安装 `0.1.6`，并连续升级至 `0.1.7`、`0.1.8`；推送后又全新安装当前 `0.1.9`。每次 setup 后 bundle/runtime/daemon 版本一致，最新 `0.1.9` 状态为 `up_to_date`。该证据不声称未观察到的 Desktop UI 更新行为。 |
 | NVIDIA 模型目录与基础 API | 通过 | 精确匹配到 `nvidia/nemotron-3-ultra-550b-a55b:free`，目录快照显示 1,000,000 context、`high` / `medium` reasoning。对同一模型的 OpenRouter Responses、流式 Responses 和函数调用 Responses 均返回 200。 |
 | 非交互式 Codex CLI 工具写入 | 通过 | 隔离 worktree 中的同一模型使用 `codex exec --approve-for-me`，返回码 0，产生 `thread.started`、`turn.started`、工具完成和 `turn.completed` 事件，只创建了 `manual-probe.txt`，内容精确为 `PING\n`。这确认 root cause 是非交互式审批路径，而非模型、OpenRouter 或 Responses 流。 |
 | 修复前真实 dashboard child 的温和停止 | 通过 | 真实 NVIDIA child 在看板中展示 PID、44 个 RSS 样本和运行态；用户操作温和停止后记录为 `term_exited`、退出码 0，无需 KILL，主仓库无变更。该 run 未产生文件变更。 |
