@@ -46,6 +46,8 @@ The developer's explicit model and reasoning choice always wins. A Codex recomme
 
 **Pre-release.** The code is public for transparent evaluation and early feedback, but the Git-backed installation/update lifecycle is not yet accepted as a stable daily workflow. In particular, application-runtime version reconciliation is a known P0 before a formal release; installing a newer Plugin bundle must not be presented as a complete runtime upgrade yet.
 
+Source repository: [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay). Public source availability does not by itself mean that the Git-backed Codex marketplace installation path has completed end-to-end acceptance.
+
 The repository deliberately does not claim features that are not implemented: automatic routing, provider fallbacks, run-level actual-cost attribution, budgets, native-worker process telemetry, direct provider integrations, a database, or a custom workflow engine.
 
 ## Security and data boundary

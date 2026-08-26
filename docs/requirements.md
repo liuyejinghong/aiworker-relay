@@ -44,6 +44,7 @@
 - 没有浏览器客户端且没有活跃外部 run 时，`external-workersd` 在 60 秒后退出；看板打开但没有活跃 run 时不做状态采样或自动 provider 请求，账户和公开跑分只接受用户主动刷新。
 - 目标是升级并融合进 `sol-worker-routing-codex`，不是长期维护平行路由项目。
 - 开发与 alpha 分发使用 Codex local marketplace；Plugin 包含 `aiworker-relay` Skill，不含 MCP server。公开 pre-release 的 Git-backed marketplace 是目标安装面，但仍需完成端到端的安装与更新验收。
+- 公开 pre-release 源码仓库是 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。仓库公开不等于 Git-backed marketplace 安装或 runtime 更新已经验收。
 - `$aiworker-relay setup` 使用 Python 3.12+ 在用户应用数据目录创建并复用专用 `venv`；明确的 setup 请求授权这一次本机安装，缺失依赖时不再要求第二次对话确认，不依赖或改写全局 Python 包。泛泛的配置请求不得自动 bootstrap。用户应用数据目录分别为 macOS `~/Library/Application Support/Codex External Workers`、Windows `%LOCALAPPDATA%\\Codex External Workers`、Linux `$XDG_DATA_HOME/codex-external-workers`（默认 `~/.local/share/codex-external-workers`）。
 - `external-workersd` 只绑定 loopback `127.0.0.1`；`orch setup` 与 `orch dispatch --profile <id> --packet <path>` 是由 Skill 调用的真实本机入口。
 - 首发外部 harness 只有隔离的 `codex exec --json --ephemeral --output-last-message`；不建设备用 CLI 或模型 SDK 路径。

@@ -131,7 +131,7 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 1. 用户在 Codex 中刷新 marketplace 并接受可用的 Plugin 更新；
 2. 用户下次需要本地控制面时执行 `$aiworker-relay setup`，它完成应用级 runtime 收敛。
 
-Git ref 与稳定发布节奏仍需以真实 marketplace 验收为准；本提案不添加自研 updater 来绕开 Codex 的安装面。
+公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)；Git-backed marketplace 的 Git ref 与稳定发布节奏仍需以真实 marketplace 验收为准。本提案不添加自研 updater 来绕开 Codex 的安装面。
 
 ## 实施包与文件责任
 
