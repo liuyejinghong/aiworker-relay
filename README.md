@@ -77,6 +77,6 @@ node --check plugins/aiworker-relay/src/orchestrator/web/app.js
 
 ## License
 
-The repository is public during pre-release. The project license will be selected before the first formal public release.
+[MIT](LICENSE)
 
 AIworker Relay is an independent project and is not affiliated with or endorsed by OpenAI or OpenRouter.
