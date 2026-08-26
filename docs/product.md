@@ -1,6 +1,6 @@
 # 产品定义：Codex 外部 Worker Plugin
 
-状态：v0.1.6 本地控制面、应用级 runtime 收敛与空闲 daemon 的受控更新已完成本机验收。Git-backed Marketplace 的干净新装 / 已安装 bundle 更新，以及一个工具调用成功的真实 external write / dashboard stop 闭环仍待验收。Ox Alpha 的最新 write probe 在 provider 工具调用阶段失败，不能标为 verified。
+状态：v0.1.9 本地控制面、应用级 runtime 收敛与空闲 daemon 的受控更新已完成本机验收；Git-backed Marketplace 的干净 CLI 安装与两次更新也已实测。相同 NVIDIA 免费模型完成了隔离的真实 Codex CLI 工具写入，真实 dashboard child 也成功温和停止。修复后的 managed write 最近被 provider `429` 限流中断，因此仍不能把“同一 managed run 的成功写入和看板闭环”标为已验收；Ox Alpha 也仍不能标为 verified。
 
 ## 一句话
 
@@ -126,10 +126,10 @@ API key 的最终录入和更新入口在本机 Web 设置页。页面不得回�
 下列本地能力已进入实现，并以聚焦测试或隔离 loopback 路径验证：
 
 - loopback Web、模型目录发现、Profile 创建 / 冻结、冻结拒绝派发、可选推理档位、原生 Luna 声明卡、账户信息和公开跑分的按需读取。
-- Task Packet、隔离 `CODEX_HOME`、detached worktree、`codex exec` harness、JSONL 证据和 TERM → 确认 KILL 的代码路径。
+- Task Packet、隔离 `CODEX_HOME`、detached worktree、`codex exec --approve-for-me` harness、JSONL 证据和 TERM → 确认 KILL 的代码路径。
 - Keyring 保存与验证的实现入口，但不会在测试中读取、回显或代填用户 Key。
 
-仍未完成的产品验收是：经 Git-backed Marketplace 完成一次干净新装和已安装 bundle 更新；再以用户明确允许、能完成 coding tools 调用的模型派发一个真实 write run，并从看板观察其完整生命周期与停止结果。实际费用归因继续后置；本地模型接入也不在当前实现范围。
+仍未完成的产品验收是：以用户明确允许且当前有可用额度的模型，经修复后的控制面成功派发一个真实 write run，并在同一个 run 中从看板观察结果与停止生命周期。Git-backed Marketplace CLI 安装与更新已完成实测；实际费用归因继续后置，本地模型接入也不在当前实现范围。
 
 ## 与 `sol-worker-routing-codex` 的关系
 

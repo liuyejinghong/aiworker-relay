@@ -319,6 +319,9 @@ async def start_codex_run(
         "exec",
         "--json",
         "--ephemeral",
+        # External runs cannot answer a terminal approval prompt. Keep their
+        # automatic approval within Codex's supported workspace-write mode.
+        "--approve-for-me",
         "--model",
         model,
         "--output-last-message",

@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 import truststore
@@ -30,7 +30,7 @@ from orchestrator.daemon import (
     validate_openrouter_key,
 )
 from orchestrator.models import Profile, RunRecord, utc_now
-from orchestrator.runner import start_process
+from orchestrator.runner import start_codex_run, start_process
 from orchestrator.tasks import PacketValidationError, parse_packet
 from orchestrator.worktree import create_worktree
 
@@ -239,6 +239,27 @@ class WorktreeTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_run_uses_noninteractive_workspace_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch(
+                "orchestrator.runner.start_process",
+                new_callable=AsyncMock,
+            ) as start:
+                await start_codex_run(
+                    worktree=root,
+                    run_dir=root / "run",
+                    prompt="Create one file.",
+                    model="nvidia/nemotron-3-ultra-550b-a55b:free",
+                    reasoning_effort="auto",
+                    api_key="test-key",
+                    code_home=root / "CODEX_HOME",
+                )
+
+        command = start.await_args.args[0]
+        self.assertIn("--approve-for-me", command)
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
+
     async def test_failed_process_keeps_one_bounded_error_summary(self) -> None:
         process = await start_process(
             [

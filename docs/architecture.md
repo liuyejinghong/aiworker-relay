@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.6 已实现本地控制面、静态看板、Profile、隔离 run 和证据路径；已在真实用户应用数据中将历史 `0.1.0` runtime 通过 setup 收敛到相同版本。Git-backed Marketplace 的干净新装/更新，以及一个工具调用成功的真实 external write / dashboard stop 闭环仍是 pre-release 阻塞，不能写成已完成。
+状态：v0.1.9 已实现本地控制面、静态看板、Profile、隔离 run 和证据路径；Git-backed Marketplace 的干净安装与两次更新、以及 bundle/runtime/daemon 的 setup 收敛均已实测。非交互式 `codex exec` 已使用受限的 workspace-write 自动审批；同一 NVIDIA 模型的真实 CLI 工具写入已成功。首个修复后的 dashboard-managed write 则被该免费模型的 OpenRouter `429` 中断，所以“同一个 managed run 同时完成写入和看板闭环”仍不能写成已完成。
 
 ## 核心原则
 
@@ -110,7 +110,7 @@ flowchart TD
     eligibility -->|冻结| refused[拒绝派发\n说明 profile 已冻结]
     eligibility -->|原生 worker| native[Codex Native Child\nCodex 管理运行态]
     eligibility -->|外部 worker| daemon[external-workersd\n本机 Web、SSE、进程监管]
-    daemon --> isolated[隔离的 CODEX_HOME\nHEAD worktree + 进程组 + codex exec --json]
+    daemon --> isolated[隔离的 CODEX_HOME\nHEAD worktree + 进程组 + codex exec --json --approve-for-me]
     isolated --> gateway[OpenRouter]
     gateway --> model[指定模型]
     isolated --> evidence[JSONL 生命周期\n结果、退出状态]
@@ -155,7 +155,7 @@ external run
 
 profile 与 run 必须分开。冻结 profile 只阻止新的 run；停止正在运行的 task 使用独立的终止流程。
 
-首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。这个限制避免在首版实现 patch 同步和冲突处理层。
+首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录，并使用 `--approve-for-me` 让非交互式 CLI 在 Codex 的 workspace-write 审批模式下执行工具。它不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。这个限制避免在首版实现 patch 同步和冲突处理层。
 
 固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。用户在 task 中明确指定档位时优先；只有 profile 被设为“自动”时，Codex 才能为该 run 选择模型实际支持的档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
 

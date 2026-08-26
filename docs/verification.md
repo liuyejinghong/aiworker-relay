@@ -47,7 +47,22 @@
 | v0.1.1 setup 入口 | 通过（已存在 runtime） | 新 launcher 直接接受 `setup --no-open` 并复用现有控制面，返回 loopback endpoint；首次缺失 runtime 的分支由聚焦单元测试覆盖，仍需干净重装后完成体验验收。 |
 | v0.1.6 runtime 版本收敛 | 通过 | 应用数据中的历史 `0.1.0` runtime 经显式 setup 收敛至 `0.1.6`；bundle、`orch version` 与健康 daemon 均报告同一版本。空闲 daemon 在替换前正常退出。 |
 | Ox Alpha 真实 write probe | 未通过，保留隔离证据 | run 创建了 detached worktree、隔离 `CODEX_HOME` 与受监管的 Codex CLI 进程，但 provider 在工具调用阶段返回 `400 Server tool request failed`；没有文件变更，因此 Profile 仍为 `unverified`。 |
-| 真实 external child 的 dashboard stop | 待验收 | 因 Ox Alpha 在约一秒内失败，无法对仍在运行的真实外部 Codex 子进程完成 TERM / KILL 联动；受控本机进程的两阶段停止合同仍已通过。 |
+| 真实 external child 的 dashboard stop | 历史待验收 | 当时 Ox Alpha 在约一秒内失败，无法对仍在运行的真实外部 Codex 子进程完成 TERM / KILL 联动；后续 2026-08-26 NVIDIA 复核已补上真实 dashboard 温和停止证据。 |
+
+## 2026-08-26 发布前复核
+
+以下记录与上方历史 alpha probe 分开：使用当前公开身份 `aiworker-relay`、当前 Codex CLI `0.149.0` 和用户明确指定的 `nvidia/nemotron-3-ultra-550b-a55b:free`。Key 只在本机钥匙串和短生命周期子进程环境中使用，未打印或写入仓库。
+
+| 验证点 | 结果 | 证据与边界 |
+| --- | --- | --- |
+| Git-backed marketplace 安装与更新 | 通过 | 在干净隔离 `CODEX_HOME` 中添加 `liuyejinghong/aiworker-relay` marketplace、安装 `0.1.6`，并连续升级至 `0.1.7`、`0.1.8`；每次 setup 后 bundle/runtime/daemon 版本一致。该证据不声称未观察到的 Desktop UI 更新行为。 |
+| NVIDIA 模型目录与基础 API | 通过 | 精确匹配到 `nvidia/nemotron-3-ultra-550b-a55b:free`，目录快照显示 1,000,000 context、`high` / `medium` reasoning。对同一模型的 OpenRouter Responses、流式 Responses 和函数调用 Responses 均返回 200。 |
+| 非交互式 Codex CLI 工具写入 | 通过 | 隔离 worktree 中的同一模型使用 `codex exec --approve-for-me`，返回码 0，产生 `thread.started`、`turn.started`、工具完成和 `turn.completed` 事件，只创建了 `manual-probe.txt`，内容精确为 `PING\n`。这确认 root cause 是非交互式审批路径，而非模型、OpenRouter 或 Responses 流。 |
+| 修复前真实 dashboard child 的温和停止 | 通过 | 真实 NVIDIA child 在看板中展示 PID、44 个 RSS 样本和运行态；用户操作温和停止后记录为 `term_exited`、退出码 0，无需 KILL，主仓库无变更。该 run 未产生文件变更。 |
+| v0.1.9 runtime 收敛 | 通过 | 显式 setup 后 bundle/runtime/daemon 同为 `0.1.9`，状态为 `up_to_date`。 |
+| 修复后 dashboard-managed NVIDIA write | 未通过，provider 限流 | 受控 run 已启动并进入真实 Codex CLI，但约两秒后以 OpenRouter `429 Too Many Requests` 失败；记录保留人类可读错误、退出码 1、空 diff 与 `unavailable` cost，不自动重试或替换模型。 |
+
+因此，`--approve-for-me` 是已验明的最小 runner 修复，429 是当前免费模型的 provider 结果而非成功。NVIDIA Profile 继续保持 `unverified`；在该模型有可用额度时，仍需一次修复后 dashboard-managed 成功 write 才能完成同-run 验收。
 
 ## 已验证结论
 

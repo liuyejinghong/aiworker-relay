@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.6 已实现并在用户应用数据中完成一次历史 runtime 收敛。Git-backed Marketplace 的干净新装和已安装 bundle 更新仍待真实 Codex 验收。
+状态：v0.1.9 已实现并在用户应用数据中完成受控 runtime 收敛。Git-backed Marketplace 的干净 CLI 安装与已安装 bundle 更新已完成真实验收；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
 
 ## 为什么需要这一项
 
@@ -131,7 +131,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 1. 用户在 Codex 中刷新 marketplace 并接受可用的 Plugin 更新；
 2. 用户下次需要本地控制面时执行 `$aiworker-relay setup`，它完成应用级 runtime 收敛。
 
-公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)；Git-backed marketplace 的 Git ref 与稳定发布节奏仍需以真实 marketplace 验收为准。本提案不添加自研 updater 来绕开 Codex 的安装面。
+公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。2026-08-26 的干净隔离验收已实际执行上述安装路径，并从 `0.1.6` 连续升级至 `0.1.7`、`0.1.8`；每次显式 setup 后 bundle、runtime 与 daemon 都报告一致版本。它验证的是 CLI marketplace 路径，不把未单独观察的 Codex Desktop 更新交互写成既成事实。本提案不添加自研 updater 来绕开 Codex 的安装面。
 
 ## 实施包与文件责任
 
@@ -147,6 +147,8 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 | `docs/` | 更新用户流程、发布说明与故障处理口径。 |
 
 ### P1 — 真实分发验收
+
+已完成的窄证据：干净 `CODEX_HOME` 已成功添加 marketplace、安装 `0.1.6` bundle、两次执行 marketplace upgrade，并经 setup 把应用级 runtime 收敛至对应 bundle。该验收没有借助自定义安装器，也没有读取或复制用户 Key。
 
 1. 在干净 Codex 用户状态安装旧 bundle，保存测试 Profile 与 Key 状态；
 2. 通过真实 marketplace 路径获得新 bundle；
@@ -174,7 +176,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 3. 一个活跃 external run 不会被更新流程停止、重启或迁移；
 4. 更新失败后上一 runtime 可重新 setup，Profile 与 Key 不丢失；
 5. 用户只需使用 Codex 的 Plugin 安装面和已有 `$aiworker-relay setup`，不需要 pip、手动 venv 操作或复制 Key；
-6. 对实际 Codex marketplace 更新行为有一次端到端观察记录，而非依据 CLI 名称推断。
+6. 对实际 Codex marketplace 更新行为有一次端到端观察记录，而非依据 CLI 名称推断；当前已具备 CLI 观察记录，Desktop 特有交互另行记录。
 
 ## 仍需用户确认的产品选择
 

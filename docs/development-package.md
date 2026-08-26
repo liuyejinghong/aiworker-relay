@@ -1,6 +1,6 @@
 # AIworker Relay v0.1 开发包
 
-状态：首个实现切片已完成本机代码、页面路径与 local marketplace 发现验收。本文同时记录已交付边界和仍待用户在 Codex UI 完成的安装 / 真实外部 run 验收。
+状态：首个实现切片已完成本机代码、页面路径、Git-backed Marketplace CLI 安装/更新与受控 runtime 收敛验收。本文同时记录已交付边界，以及仍待有可用 provider 容量时完成的修复后 dashboard-managed write 验收。
 
 ## 首个闭环
 
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 开发分发 | 使用 Codex local marketplace 安装 Plugin；仓库 `.agents/plugins/marketplace.json` 指向 `plugins/aiworker-relay/`，该唯一 Plugin source 同时包含 `aiworker-relay` Skill 与启动本地运行时所需资源。公开目录发布不是本切片工作。 | 不安装 MCP server，不改写 Codex 的默认模型、provider 或原生 worker 配置。 |
 | 运行时 bootstrap | 明确的 `$aiworker-relay setup` 通过 Plugin 随包 launcher 检查 Python 3.12+，在用户应用数据目录创建并复用专用 `venv`，再从该环境调用 `orch setup` 启动 `external-workersd`。缺失依赖时，这一次明确 setup 直接授权安装，不再追加对话确认。 | 不依赖或改写用户全局 Python site-packages。首次应用级安装已完成一次真实 marketplace 验收；改版 bootstrap 待重新安装复核。 |
-| 首发 harness | 只使用 `codex exec`，以 `--json`、`--ephemeral` 和 `--output-last-message` 运行。每个 run 使用独立 `CODEX_HOME` 与独立 provider 配置。 | 不引入第二条 CLI、SDK 或自研 agent loop。 |
+| 首发 harness | 只使用 `codex exec`，以 `--json`、`--ephemeral`、`--approve-for-me` 和 `--output-last-message` 运行。每个 run 使用独立 `CODEX_HOME` 与独立 provider 配置，自动审批仍是 Codex 的 workspace-write 模式。 | 不引入第二条 CLI、SDK、自研 agent loop 或危险的全局 sandbox bypass。 |
 | 上下文 | Task Packet 提供目标、范围、禁止修改项、已知事实、验收与验证。外部 run 不继承主 Codex 对话、主 `CODEX_HOME` 或 hooks；工作区内的项目规则仍是该项目的事实。 | 不复制主 Codex 的完整上下文。 |
 | 写入隔离 | 写入任务只在从当前 `HEAD` 创建的 Git worktree 中执行，worktree 位于 `.orch/worktrees/<run-id>`。主工作区保持不变，run 不创建 commit，也不自动 merge。 | 不直接让外部 worker 写主工作区，不复制未提交改动。 |
 | dirty 工作区 | 若主工作区有未提交改动，run 仍以 `HEAD` 为源；看板和 Task Packet 必须明确标记“未提交改动未包含”。用户可先整理版本库或改用原生 worker。 | 不在首版实现 patch 复制、stash 恢复或自动冲突处理。 |
@@ -40,6 +40,7 @@
 
 ```text
 codex exec --json --ephemeral \
+  --approve-for-me \
   --output-last-message <run>/last-message.md \
   --cd <worktree> \
   <task-packet-prompt>
@@ -115,7 +116,7 @@ API 的 error body 固定为 `{ "code": "…", "message": "…" }`。`frozen_pro
 
 已完成的本机验收不是仅看页面截图：聚焦测试覆盖 Task Packet、worktree、TLS、Profile 与进程两阶段停止；隔离 daemon 真实服务了多页 Web；通过页面查询 OpenRouter、发现 Ox Alpha、带入可用推理档位、创建 Profile、冻结 Profile，并由真实 API 拒绝冻结派发。
 
-local marketplace 与首次 Plugin 安装 / 应用级 runtime bootstrap 已经通过。剩余的完整用户闭环是：开发者在 Web 保存自己的 OpenRouter key，再从 Codex 明确派发一个 write task。控制面应为任务创建隔离 worktree 和独立进程组；看板应在关闭并重新打开后保留 run 事实；TERM 与经确认 KILL 都需与真实外部 CLI 子进程联动接受验收；Codex 最后读取 task packet、last message、diff 与验证证据。
+Git-backed marketplace 的干净 CLI 安装 / 更新与首次 Plugin runtime bootstrap 已经通过。NVIDIA 模型已在隔离 `codex exec --approve-for-me` 中实际完成限定写入，真实外部 CLI child 也已由 dashboard 温和停止。剩余的完整闭环是：在 provider 可用时，由修复后的控制面完成同一个 managed write run，并保留其 diff、结果与看板状态；最近一次 NVIDIA 受控派发因 `429` 在启动后失败，不能作为成功证据。Codex 最后读取 task packet、last message、diff 与验证证据。
 
 实际费用没有可信归因时，验收只检查它被标记为 `pending` 或 `unavailable`。任何显示为实际金额的费用都必须有可追溯的 provider 关联证据。
 

@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1.6 已实现本地看板、supervisor 与派发代码路径，并已在真实用户应用数据中完成 runtime 版本收敛。AIworker Relay 的 Git-backed 安装/更新，以及一个工具调用成功的真实 external write / dashboard stop 闭环仍待端到端复核。
+状态：v0.1.9 已实现本地看板、supervisor 与派发代码路径，并已完成 Git-backed Marketplace 的干净 CLI 安装/更新和 runtime 版本收敛。相同 NVIDIA 模型已完成一次隔离的真实 Codex CLI 工具写入，真实 dashboard child 也已温和停止；修复后的 managed write 最近受免费模型 `429` 限流影响，不能写成完整同 run 闭环已通过。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 
@@ -19,7 +19,7 @@ codex plugin marketplace add liuyejinghong/aiworker-relay --ref main --sparse .a
 codex plugin add aiworker-relay@aiworker-relay
 ```
 
-更新 marketplace snapshot 时使用 `codex plugin marketplace upgrade aiworker-relay`；已安装 Plugin 如何在 Codex Desktop 中切换到新 bundle，仍必须以一次真实 UI 验收为准。用户不需要先安装独立 Web 产品，也不需要学习一组常用的派发命令。
+更新 marketplace snapshot 时使用 `codex plugin marketplace upgrade aiworker-relay`。该 CLI 流程已在干净隔离环境实测；已安装 Plugin 在 Codex Desktop 中如何呈现新 bundle，仍应按实际 UI 观察说明。用户不需要先安装独立 Web 产品，也不需要学习一组常用的派发命令。
 
 ### 2. 在新 task 中完成 setup
 
@@ -75,7 +75,7 @@ codex plugin remove external-workers@aiworker-local
 
 该命令移除 Codex 的旧 Plugin 配置和缓存；不会删除本项目源码、用户应用数据目录中的运行时，或系统钥匙串中的 OpenRouter Key。AIworker Relay 不保留旧 Skill 名称作为长期兼容层；它将从新的 `aiworker-relay` marketplace 安装面提供。
 
-当前 runtime 更新规则见[更新与发布生命周期](update-lifecycle.md)：用户在获得新 Plugin bundle 后显式执行 `$aiworker-relay setup`；空闲 runtime 才会被可恢复地替换，活跃 external run 会让更新明确延后。Profile、钥匙串中的 Key 和项目 `.orch/` 证据不在这次替换中迁移或删除。Git marketplace 的真实 bundle 更新体验仍需验收，不能仅根据命令名称推断。
+当前 runtime 更新规则见[更新与发布生命周期](update-lifecycle.md)：用户在获得新 Plugin bundle 后显式执行 `$aiworker-relay setup`；空闲 runtime 才会被可恢复地替换，活跃 external run 会让更新明确延后。Profile、钥匙串中的 Key 和项目 `.orch/` 证据不在这次替换中迁移或删除。Git marketplace 的 CLI bundle 更新已实测，仍不能仅根据命令名称推断未观察到的 Desktop UI 行为。
 
 ## 第一次真正可接受的闭环
 

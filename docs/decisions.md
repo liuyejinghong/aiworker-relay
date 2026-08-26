@@ -470,4 +470,20 @@ Presenting the local marketplace as the public channel, building a separate cust
 
 Consequences:
 
-The public catalog at `.agents/plugins/marketplace.json` refers to `https://github.com/liuyejinghong/aiworker-relay.git`, `./plugins/aiworker-relay`, and `main`. Source-checkout development may still use a local marketplace, but public installation and update instructions use `codex plugin marketplace add` and `codex plugin add`. The actual Codex Desktop update behavior remains an explicit release acceptance item.
+The public catalog at `.agents/plugins/marketplace.json` refers to `https://github.com/liuyejinghong/aiworker-relay.git`, `./plugins/aiworker-relay`, and `main`. Source-checkout development may still use a local marketplace, but public installation and update instructions use `codex plugin marketplace add` and `codex plugin add`. A clean isolated CLI install plus `0.1.6 → 0.1.7 → 0.1.8` marketplace upgrades have been observed; untested Codex Desktop update interactions are not silently claimed as equivalent.
+
+## D030 — Use workspace-write approval for non-interactive external runs
+
+Status: Accepted
+
+Reason:
+
+An isolated `codex exec` that needed to write a bounded file made no progress when it could not answer a terminal approval prompt. Re-running the exact NVIDIA model with Codex's `--approve-for-me` mode produced the expected tool event stream and the only permitted file change.
+
+Alternatives considered:
+
+Using `--dangerously-bypass-approvals-and-sandbox`, building a second model harness, or assuming a free-model timeout were not accepted.
+
+Consequences:
+
+Every external run includes `--approve-for-me`. Its tools remain inside Codex's supported workspace-write approval mode and the detached worktree; the product does not claim a global sandbox bypass. A dashboard-managed successful write must still be observed before marking a Profile verified.
