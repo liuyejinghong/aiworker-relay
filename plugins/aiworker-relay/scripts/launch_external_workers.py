@@ -257,10 +257,16 @@ def _install_runtime_at(runtime: Path, *, expected_version: str) -> Path:
     runtime.parent.mkdir(parents=True, exist_ok=True)
     venv.EnvBuilder(with_pip=True).create(str(runtime))
     python = venv_python(runtime)
-    subprocess.run(
+    install = subprocess.run(
         [str(python), "-m", "pip", "install", "--upgrade", str(SOURCE_ROOT)],
-        check=True,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
+    if install.returncode:
+        raise RuntimeUpdateError(
+            "could not install local runtime dependencies; check your network and retry setup"
+        )
     orch = venv_orch(runtime)
     actual_version = installed_runtime_version(orch)
     if actual_version != expected_version:
@@ -430,6 +436,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("aiworker-relay: Python 3.12 or newer is required", file=sys.stderr)
             return 2
         if args.command == "setup":
+            if status.get("update_status") in {"runtime_missing", "update_required"}:
+                print("aiworker-relay: preparing the local control plane...")
             orch, deferred = reconcile_runtime()
             if deferred:
                 print(f"aiworker-relay: {deferred}")
