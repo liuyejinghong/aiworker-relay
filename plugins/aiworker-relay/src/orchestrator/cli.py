@@ -23,6 +23,14 @@ class CLIError(RuntimeError):
     """A user-actionable launcher or local API error."""
 
 
+def _loopback_open(request: urllib.request.Request | str, *, timeout: float):
+    """Open a local control-plane URL without inheriting desktop proxies."""
+
+    return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+        request, timeout=timeout
+    )
+
+
 def _endpoint_from_record(record: dict[str, Any]) -> str | None:
     pid = record.get("pid")
     port = record.get("port")
@@ -37,9 +45,7 @@ def _endpoint_from_record(record: dict[str, Any]) -> str | None:
 
 def _health(endpoint: str, *, timeout: float = 0.8) -> bool:
     try:
-        with urllib.request.urlopen(
-            f"{endpoint}/api/health", timeout=timeout
-        ) as response:
+        with _loopback_open(f"{endpoint}/api/health", timeout=timeout) as response:
             value = json.loads(response.read().decode("utf-8"))
         return bool(value.get("ok"))
     except (OSError, urllib.error.URLError, json.JSONDecodeError):
@@ -127,7 +133,7 @@ def _api_post(endpoint: str, path: str, payload: dict[str, Any]) -> dict[str, An
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with _loopback_open(request, timeout=10) as response:
             value = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:

@@ -45,6 +45,9 @@
 | local marketplace 发现 | 通过 | 采用标准 `./plugins/external-workers` source path 后，`codex plugin list` 显示 `external-workers@aiworker-local` 为可安装状态。 |
 | 首次 Plugin 安装与应用级 runtime | 通过 | 用户已在 Codex UI 从 `aiworker-local` 安装 Plugin，并完成应用级 venv 与运行依赖安装；本地控制面返回 loopback 地址，随后 status 为 `runtime_ready=true`。当时采用旧版二次确认流程；v0.1.1 的一次 setup 自动 bootstrap 待重新安装复核。 |
 | v0.1.1 setup 入口 | 通过（已存在 runtime） | 新 launcher 直接接受 `setup --no-open` 并复用现有控制面，返回 loopback endpoint；首次缺失 runtime 的分支由聚焦单元测试覆盖，仍需干净重装后完成体验验收。 |
+| v0.1.6 runtime 版本收敛 | 通过 | 应用数据中的历史 `0.1.0` runtime 经显式 setup 收敛至 `0.1.6`；bundle、`orch version` 与健康 daemon 均报告同一版本。空闲 daemon 在替换前正常退出。 |
+| Ox Alpha 真实 write probe | 未通过，保留隔离证据 | run 创建了 detached worktree、隔离 `CODEX_HOME` 与受监管的 Codex CLI 进程，但 provider 在工具调用阶段返回 `400 Server tool request failed`；没有文件变更，因此 Profile 仍为 `unverified`。 |
+| 真实 external child 的 dashboard stop | 待验收 | 因 Ox Alpha 在约一秒内失败，无法对仍在运行的真实外部 Codex 子进程完成 TERM / KILL 联动；受控本机进程的两阶段停止合同仍已通过。 |
 
 ## 已验证结论
 
@@ -58,7 +61,7 @@
 - Ox Alpha 当前页面标明支持 tool calling 和 `response_format`，但不提供 JSON Schema enforcement；本地实测也没有得到可用 schema 约束。因此 result contract 不能依赖该能力。
 - Ox Alpha 的免费 / 预览路径在一次工具调用后的后续生成与一次受控重试中都触发 429。现有证据只能说明该 provider / model 当时受到限流，不能据此断言 Codex CLI 多轮 harness 普遍不兼容；单轮路由成功仍不足以证明其适合长任务。
 - Codex CLI 的 JSON 输出没有传递 OpenRouter 的实际 cost 或 generation ID。只有在费用归因方案明确后，才可以承诺单 run、日、月的真实费用面板。
-- 进程停止已具有看板与 daemon 代码路径，且 OS 进程组语义已测；尚未用用户实际 Key 对真实 Codex CLI 子进程完成完整的看板取消联动验收。
+- 进程停止已具有看板与 daemon 代码路径，且 OS 进程组语义已测；Ox Alpha 的真实 write probe 启动后即在 provider 工具调用阶段失败，故尚未用可持续运行的真实 Codex CLI 子进程完成完整的看板取消联动验收。
 
 ## 对下一轮验收与演进的直接影响
 

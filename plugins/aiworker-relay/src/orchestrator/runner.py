@@ -18,6 +18,27 @@ class ProcessControlError(RuntimeError):
     """A process lifecycle operation is invalid or could not be observed."""
 
 
+def _error_message(value: object) -> str | None:
+    """Keep the provider's human message, not its opaque event payload."""
+
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value.strip() or None
+        return _error_message(decoded)
+    if isinstance(value, dict):
+        nested = value.get("error")
+        if nested is not None:
+            return _error_message(nested)
+        for key in ("message", "detail"):
+            detail = value.get(key)
+            message = _error_message(detail)
+            if message:
+                return message
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class StopOutcome:
     state: str
@@ -42,6 +63,10 @@ class ManagedProcess:
         self.term_requested = False
         self.force_requested = False
         self._rss_task: asyncio.Task[None] | None = None
+        self._stdout_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._stdout_tail = ""
+        self._stderr_tail = ""
 
     @property
     def pid(self) -> int:
@@ -53,6 +78,33 @@ class ManagedProcess:
 
     def is_running(self) -> bool:
         return self.process.returncode is None
+
+    @property
+    def stderr_summary(self) -> str | None:
+        """Return one bounded failure line, never a persisted transcript."""
+
+        lines = [line.strip() for line in self._stderr_tail.splitlines() if line.strip()]
+        return lines[-1][:1000] if lines else None
+
+    @property
+    def failure_summary(self) -> str | None:
+        """Extract a structured CLI failure without retaining its transcript."""
+
+        for line in reversed(self._stdout_tail.splitlines()):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("type", "")).lower()
+            if "error" not in event_type and "fail" not in event_type:
+                continue
+            detail = event.get("error") or event.get("message") or event.get("detail")
+            message = _error_message(detail)
+            if message:
+                return message[:1000]
+        return self.stderr_summary
 
     async def _sample_rss(self) -> None:
         while self.is_running():
@@ -72,12 +124,38 @@ class ManagedProcess:
     def start_sampling(self) -> None:
         if self.rss_callback is not None and self._rss_task is None:
             self._rss_task = asyncio.create_task(self._sample_rss())
+        if self.process.stdout is not None and self._stdout_task is None:
+            self._stdout_task = asyncio.create_task(self._capture_stdout())
+        if self.process.stderr is not None and self._stderr_task is None:
+            self._stderr_task = asyncio.create_task(self._capture_stderr())
+
+    async def _capture_stdout(self) -> None:
+        assert self.process.stdout is not None
+        while True:
+            chunk = await self.process.stdout.read(4096)
+            if not chunk:
+                return
+            self._stdout_tail = (self._stdout_tail + chunk.decode(errors="replace"))[-4096:]
+
+    async def _capture_stderr(self) -> None:
+        assert self.process.stderr is not None
+        while True:
+            chunk = await self.process.stderr.read(4096)
+            if not chunk:
+                return
+            self._stderr_tail = (self._stderr_tail + chunk.decode(errors="replace"))[-4096:]
 
     async def _finish_sampling(self) -> None:
         if self._rss_task is not None:
             self._rss_task.cancel()
             await asyncio.gather(self._rss_task, return_exceptions=True)
             self._rss_task = None
+        if self._stdout_task is not None:
+            await asyncio.gather(self._stdout_task, return_exceptions=True)
+            self._stdout_task = None
+        if self._stderr_task is not None:
+            await asyncio.gather(self._stderr_task, return_exceptions=True)
+            self._stderr_task = None
 
     async def wait(self) -> int:
         try:
@@ -177,10 +255,10 @@ async def start_process(
         "env": env,
         "stdin": asyncio.subprocess.DEVNULL,
         # The harness writes its authoritative final message to the explicit
-        # output file.  Discarding raw streams keeps a long-running child from
-        # blocking on an undrained pipe and avoids persisting a transcript.
-        "stdout": asyncio.subprocess.DEVNULL,
-        "stderr": asyncio.subprocess.DEVNULL,
+        # output file. JSONL stdout and stderr are drained only in memory; on
+        # failure, one structured error is retained instead of a transcript.
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
     }
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP

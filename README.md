@@ -44,7 +44,7 @@ The developer's explicit model and reasoning choice always wins. A Codex recomme
 
 ## Current release status
 
-**Pre-release.** The code is public for transparent evaluation and early feedback, but the Git-backed installation/update lifecycle is not yet accepted as a stable daily workflow. In particular, application-runtime version reconciliation is a known P0 before a formal release; installing a newer Plugin bundle must not be presented as a complete runtime upgrade yet.
+**Pre-release.** Runtime version reconciliation is implemented and has recovered the existing local application runtime to the current bundle version. Formal release is still blocked on two real-user checks: a clean Git-backed Marketplace install/update, and a successful tool-capable external write with its dashboard stop lifecycle. Installing a newer Plugin bundle is therefore not yet presented as a fully accepted public update workflow.
 
 Source repository: [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay). Public source availability does not by itself mean that the Git-backed Codex marketplace installation path has completed end-to-end acceptance.
 

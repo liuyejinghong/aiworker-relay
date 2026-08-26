@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1 的本地控制面、静态看板、Profile、隔离 run 和证据路径已实现；local marketplace、用户首次 Plugin 安装与应用级运行时 bootstrap 已实际通过。v0.1.1 的一次 setup 自动 bootstrap 和真实用户 write run 仍不应被写成已完成。
+状态：v0.1.6 已实现本地控制面、静态看板、Profile、隔离 run 和证据路径；已在真实用户应用数据中将历史 `0.1.0` runtime 通过 setup 收敛到相同版本。Git-backed Marketplace 的干净新装/更新，以及一个工具调用成功的真实 external write / dashboard stop 闭环仍是 pre-release 阻塞，不能写成已完成。
 
 ## 核心原则
 
@@ -12,7 +12,7 @@
 
 正式分发单元是 **AIworker Relay** Codex Plugin，核心入口是 `aiworker-relay` Skill。Plugin 解决“如何把这项能力交给 Codex”；Skill 解决“Codex 何时可使用这项能力”；本地控制面解决“如何配置与监管外部资源”。它们不是三套平行产品。
 
-为符合 Codex marketplace 的实际 source 约定，仓库根目录的 `.agents/plugins/marketplace.json` 指向 `./plugins/aiworker-relay`。该目录是唯一可安装的 Plugin source，内含 `.codex-plugin/plugin.json`、Skill、launcher、`pyproject.toml` 与 Python runtime；仓库根目录保留产品文档、图与开发测试材料。它不是第二份 runtime，也不依赖仓库外的全局 Python 包。
+仓库根目录的 `.agents/plugins/marketplace.json` 是公开 Git marketplace catalog，并以 `git-subdir` 指向同一仓库内的 `./plugins/aiworker-relay`。该目录是唯一可安装的 Plugin source，内含 `.codex-plugin/plugin.json`、Skill、launcher、`pyproject.toml` 与 Python runtime；仓库根目录保留产品文档、图与开发测试材料。它不是第二份 runtime，也不依赖仓库外的全局 Python 包。local marketplace 只保留给源码开发，不作为面向普通开发者的发布说明。
 
 首次配置从一个新的 Codex task 中调用 `$aiworker-relay setup` 开始，随后由 Skill 打开本机 Web 控制面。API Key 与 worker Profile 只在这个 Web 控制面中配置；Skill、Codex 对话与普通 CLI 不接收这些配置值。之后用户仍像平时一样把任务交给 Codex：可以明确指定 profile，也可以接受 Codex 的建议。外部付费用量的派发不应通过不可见的全局拦截发生。
 

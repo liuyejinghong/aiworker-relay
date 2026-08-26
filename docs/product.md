@@ -1,6 +1,6 @@
 # 产品定义：Codex 外部 Worker Plugin
 
-状态：v0.1 本地控制面已实现并完成本机路径、local marketplace 发现、用户首次 Plugin 安装与应用级 bootstrap 验证；用户实际 Key 保存、外部 write run 与看板停止联动尚待验收。v0.1.1 的一次 setup 自动 bootstrap 待重新安装后复核。
+状态：v0.1.6 本地控制面、应用级 runtime 收敛与空闲 daemon 的受控更新已完成本机验收。Git-backed Marketplace 的干净新装 / 已安装 bundle 更新，以及一个工具调用成功的真实 external write / dashboard stop 闭环仍待验收。Ox Alpha 的最新 write probe 在 provider 工具调用阶段失败，不能标为 verified。
 
 ## 一句话
 
@@ -129,7 +129,7 @@ API key 的最终录入和更新入口在本机 Web 设置页。页面不得回�
 - Task Packet、隔离 `CODEX_HOME`、detached worktree、`codex exec` harness、JSONL 证据和 TERM → 确认 KILL 的代码路径。
 - Keyring 保存与验证的实现入口，但不会在测试中读取、回显或代填用户 Key。
 
-仍未完成的产品验收是：在用户明确同意后，安装 Plugin、保存其实际 Key、派发一个真实 write run，并从看板观察该 run 的完整生命周期与停止结果。实际费用归因继续后置；本地模型接入也不在当前实现范围。
+仍未完成的产品验收是：经 Git-backed Marketplace 完成一次干净新装和已安装 bundle 更新；再以用户明确允许、能完成 coding tools 调用的模型派发一个真实 write run，并从看板观察其完整生命周期与停止结果。实际费用归因继续后置；本地模型接入也不在当前实现范围。
 
 ## 与 `sol-worker-routing-codex` 的关系
 

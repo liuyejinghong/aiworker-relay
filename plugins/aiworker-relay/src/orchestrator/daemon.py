@@ -386,6 +386,15 @@ class DaemonState:
     def _record_payload(self, record: RunRecord) -> dict[str, Any]:
         return record.to_dict()
 
+    def active_run_ids(self) -> tuple[str, ...]:
+        """Return only external runs the daemon can currently protect."""
+
+        return tuple(
+            record.run_id
+            for record in self.records.values()
+            if record.status in {"starting", "running", "stopping"}
+        )
+
     def overview(self) -> dict[str, Any]:
         records = sorted(
             self.records.values(), key=lambda value: value.updated_at, reverse=True
@@ -674,6 +683,8 @@ class DaemonState:
             record.stop_outcome = "term_exited"
         else:
             record.status = "succeeded" if returncode == 0 else "failed"
+        if returncode != 0 and process.failure_summary:
+            record.error = process.failure_summary.replace(api_key, "[REDACTED]")
         output_path = self.runs_root / record.run_id / "last-message.md"
         if output_path.exists():
             evidence.write_last_message(output_path.read_text(encoding="utf-8"))
@@ -720,14 +731,23 @@ class DaemonState:
         await self.broadcast("run.updated", run=self._record_payload(record))
         return record
 
+    def request_idle_shutdown(self) -> dict[str, Any]:
+        """Let the launcher replace an idle runtime without touching a run."""
+
+        active_runs = self.active_run_ids()
+        if active_runs:
+            raise APIError(
+                "active_runs",
+                "daemon shutdown was refused because external runs are active",
+                status=409,
+            )
+        self._shutdown.set()
+        return {"status": "shutting_down", "version": __version__}
+
     async def idle_loop(self) -> None:
         while not self._shutdown.is_set():
             await asyncio.sleep(1)
-            active = any(
-                record.status in {"starting", "running", "stopping"}
-                for record in self.records.values()
-            )
-            if self._sse_clients == 0 and not active:
+            if self._sse_clients == 0 and not self.active_run_ids():
                 if time.monotonic() - self._last_activity >= 60:
                     self._shutdown.set()
 
@@ -873,6 +893,10 @@ async def _stop(request: web.Request) -> web.Response:
     return web.json_response(request.app[STATE_KEY]._record_payload(record))
 
 
+async def _shutdown(request: web.Request) -> web.Response:
+    return web.json_response(request.app[STATE_KEY].request_idle_shutdown())
+
+
 async def _index(request: web.Request) -> web.StreamResponse:
     static_dir = request.app[STATIC_DIR_KEY]
     index = static_dir / "index.html"
@@ -907,6 +931,7 @@ def create_app(
     app.router.add_get("/api/runs", _route(_runs))
     app.router.add_post("/api/runs", _route(_runs))
     app.router.add_post("/api/runs/{run_id}/stop", _route(_stop))
+    app.router.add_post("/api/shutdown", _route(_shutdown))
     resolved_static_dir = app[STATIC_DIR_KEY]
     if resolved_static_dir.is_dir():
         # Keep the frontend a replaceable static bundle.  API routes are

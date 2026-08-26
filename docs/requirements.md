@@ -43,7 +43,7 @@
 - 用户级 Profile 使用原子 JSON；项目级 run 证据使用 `.orch/runs/` 下的 JSONL。真实费用日/月汇总在可靠归因前不生成，不引入数据库。
 - 没有浏览器客户端且没有活跃外部 run 时，`external-workersd` 在 60 秒后退出；看板打开但没有活跃 run 时不做状态采样或自动 provider 请求，账户和公开跑分只接受用户主动刷新。
 - 目标是升级并融合进 `sol-worker-routing-codex`，不是长期维护平行路由项目。
-- 开发与 alpha 分发使用 Codex local marketplace；Plugin 包含 `aiworker-relay` Skill，不含 MCP server。公开 pre-release 的 Git-backed marketplace 是目标安装面，但仍需完成端到端的安装与更新验收。
+- 源码开发可使用 Codex local marketplace；面向其他开发者的公开 pre-release 使用 Git-backed marketplace。Plugin 包含 `aiworker-relay` Skill，不含 MCP server；该公开安装与更新路径仍需完成端到端验收。
 - 公开 pre-release 源码仓库是 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。仓库公开不等于 Git-backed marketplace 安装或 runtime 更新已经验收。
 - `$aiworker-relay setup` 使用 Python 3.12+ 在用户应用数据目录创建并复用专用 `venv`；明确的 setup 请求授权这一次本机安装，缺失依赖时不再要求第二次对话确认，不依赖或改写全局 Python 包。泛泛的配置请求不得自动 bootstrap。用户应用数据目录分别为 macOS `~/Library/Application Support/Codex External Workers`、Windows `%LOCALAPPDATA%\\Codex External Workers`、Linux `$XDG_DATA_HOME/codex-external-workers`（默认 `~/.local/share/codex-external-workers`）。
 - `external-workersd` 只绑定 loopback `127.0.0.1`；`orch setup` 与 `orch dispatch --profile <id> --packet <path>` 是由 Skill 调用的真实本机入口。
@@ -58,13 +58,11 @@
 
 ## 当前阶段边界
 
-本次已完成：符合 Codex marketplace source 约定的 AIworker Relay Plugin package、`aiworker-relay` Skill、应用级 bootstrap launcher、loopback `external-workersd`、Profile / Key / run API、账户与公开跑分的按需读取、静态多页 Web、隔离 worktree / `codex exec` 路径、JSONL 证据与两阶段停止代码。
+本次已完成：符合 Codex marketplace source 约定的 AIworker Relay Plugin package、`aiworker-relay` Skill、应用级 bootstrap launcher、loopback `external-workersd`、Profile / Key / run API、账户与公开跑分的按需读取、静态多页 Web、隔离 worktree / `codex exec` 路径、JSONL 证据与两阶段停止代码；canonical package `VERSION`、setup-only runtime 收敛、活跃 run 更新延后、idle daemon 受控退出、更新失败恢复与 dispatch 版本不一致拒绝。
 
-本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；以及历史 alpha 身份下 `aiworker-local` marketplace 对 `external-workers` 的发现、用户首次 Plugin 安装和应用级 runtime bootstrap。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree 与 TERM → KILL。
+本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；历史 alpha 身份下 `aiworker-local` marketplace 对 `external-workers` 的发现、用户首次 Plugin 安装和应用级 runtime bootstrap；以及真实用户应用数据从 `0.1.0` 至 `0.1.6` 的空闲 runtime 收敛。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree、TERM → KILL、runtime 失败恢复、active update defer 与错误摘要脱敏。
 
-尚未验收：v0.1.1 的一次 setup 自动 bootstrap、用户实际 Key 保存、真实外部 write run 与真实看板停止联动。实际费用、日/月汇总、预算、自动路由与 fallback 均未实现。
-
-另外已确认一个 P0 更新断层：本机已安装 Plugin 显示 `0.1.1`，应用级 `orch version` 仍为 `0.1.0`。现有 launcher 只在 runtime 缺失时安装，无法在 Plugin 更新后收敛已有 runtime。该事实不能被当作正常升级行为；拟议修复见 [更新与发布生命周期](update-lifecycle.md)。
+尚未验收：Git-backed marketplace 的干净新装/已安装 bundle 更新、工具调用成功的真实外部 write run 与真实看板停止联动。Ox Alpha 的实验性 write probe 当前在 provider 侧以 `400 Server tool request failed` 结束，故它不能被标为 verified。实际费用、日/月汇总、预算、自动路由与 fallback 均未实现。
 
 ## 待确认
 
@@ -73,15 +71,8 @@
 - 哪些模型必须通过“单轮 / 工具调用 / 多轮收敛 / 取消”兼容性矩阵后才可启用？
 - 哪些已验证能力足以将一个 Profile 从 `unverified` 升为 `verified`；不同模型是否需要分别记录单轮、工具调用、多轮收敛与取消结果？
 
-### 1a. Plugin 分发与启动
-
-- v0.1.1 的一次 setup 自动 bootstrap 是否能在重新安装后的目标 Codex 中完整通过？
-- Plugin 如何检查 `aiohttp`、`psutil`、`keyring`、`truststore`、Codex CLI 与可用系统密钥服务，并在缺失时给出可操作的 setup 结果？
-
 ### 1b. Plugin、runtime 与发布更新
 
-- AIworker Relay 的 Git-backed marketplace 应采用哪一个正式公开安装入口，并如何完成首次端到端安装验收？
-- Plugin bundle 更新后，是否确认仅在用户显式执行 `$aiworker-relay setup` 时收敛应用级 runtime（推荐），而不是在 dispatch 中隐式更新？
 - major breaking change 是否要求额外用户确认；patch / minor 是否可沿用 setup 的既有本机安装授权？
 - 看板是否只呈现当前 bundle/runtime/daemon 版本与可操作的更新结果，还是确有用户价值需要维护 release history？
 - Codex Desktop 对 Git marketplace 刷新后“已安装 Plugin 更新”的实际行为是什么，应该如何准确写入新用户指引？

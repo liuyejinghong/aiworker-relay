@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1 已实现本地看板、supervisor 与派发代码路径，并已在 Codex UI 以历史 alpha 身份完成一次真实首次 Plugin 安装与应用级 bootstrap。AIworker Relay 的 Git-backed 安装与 v0.1.1 的一次 setup 自动 bootstrap 仍待端到端复核。
+状态：v0.1.6 已实现本地看板、supervisor 与派发代码路径，并已在真实用户应用数据中完成 runtime 版本收敛。AIworker Relay 的 Git-backed 安装/更新，以及一个工具调用成功的真实 external write / dashboard stop 闭环仍待端到端复核。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 
@@ -12,7 +12,14 @@
 
 用户安装 AIworker Relay Plugin。Codex 识别其中的 `aiworker-relay` Skill；安装本身不改写主 Codex 的模型、provider、原生 worker、系统提示、hooks 或项目 `AGENTS.md`。
 
-开发与 alpha 阶段通过 Codex local marketplace 安装 Plugin；公开 pre-release 将使用 Git-backed marketplace，但首次安装与更新路径必须先完成真实验收。用户不需要先安装独立 Web 产品，也不需要学习一组常用的派发命令。
+公开 pre-release 使用 Git-backed marketplace。正常开发者的安装命令是：
+
+```bash
+codex plugin marketplace add liuyejinghong/aiworker-relay --ref main --sparse .agents/plugins
+codex plugin add aiworker-relay@aiworker-relay
+```
+
+更新 marketplace snapshot 时使用 `codex plugin marketplace upgrade aiworker-relay`；已安装 Plugin 如何在 Codex Desktop 中切换到新 bundle，仍必须以一次真实 UI 验收为准。用户不需要先安装独立 Web 产品，也不需要学习一组常用的派发命令。
 
 ### 2. 在新 task 中完成 setup
 
@@ -68,7 +75,7 @@ codex plugin remove external-workers@aiworker-local
 
 该命令移除 Codex 的旧 Plugin 配置和缓存；不会删除本项目源码、用户应用数据目录中的运行时，或系统钥匙串中的 OpenRouter Key。AIworker Relay 不保留旧 Skill 名称作为长期兼容层；它将从新的 `aiworker-relay` marketplace 安装面提供。
 
-当前实现存在一个已确认的限制：重新安装 Plugin 只会替换 Plugin bundle，不会自动升级已经存在的应用级 runtime。因此“保留 runtime”只表示配置和运行证据不会被删除，不能表示运行代码已经更新。版本收敛与失败恢复的拟议规则见[更新与发布生命周期](update-lifecycle.md)；在该方案实施并完成真实 marketplace 验收前，不应把重装描述为完整升级。
+当前 runtime 更新规则见[更新与发布生命周期](update-lifecycle.md)：用户在获得新 Plugin bundle 后显式执行 `$aiworker-relay setup`；空闲 runtime 才会被可恢复地替换，活跃 external run 会让更新明确延后。Profile、钥匙串中的 Key 和项目 `.orch/` 证据不在这次替换中迁移或删除。Git marketplace 的真实 bundle 更新体验仍需验收，不能仅根据命令名称推断。
 
 ## 第一次真正可接受的闭环
 

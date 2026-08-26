@@ -7,8 +7,10 @@
     {
       "name": "aiworker-relay",
       "source": {
-        "source": "local",
-        "path": "./plugins/aiworker-relay"
+        "source": "git-subdir",
+        "url": "https://github.com/liuyejinghong/aiworker-relay.git",
+        "path": "./plugins/aiworker-relay",
+        "ref": "main"
       },
       "policy": {
         "installation": "AVAILABLE",

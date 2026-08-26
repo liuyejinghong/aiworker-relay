@@ -29,7 +29,7 @@ from orchestrator.daemon import (
     fetch_openrouter_benchmarks,
     validate_openrouter_key,
 )
-from orchestrator.models import Profile
+from orchestrator.models import Profile, RunRecord, utc_now
 from orchestrator.runner import start_process
 from orchestrator.tasks import PacketValidationError, parse_packet
 from orchestrator.worktree import create_worktree
@@ -239,6 +239,19 @@ class WorktreeTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_process_keeps_one_bounded_error_summary(self) -> None:
+        process = await start_process(
+            [
+                sys.executable,
+                "-c",
+                "import json, sys; print(json.dumps({'type': 'turn.failed', 'error': {'message': json.dumps({'error': {'message': 'provider rate limited'}, 'user_id': 'do-not-store'})}})); sys.stderr.write('fallback\\n'); raise SystemExit(1)",
+            ],
+            cwd=Path.cwd(),
+        )
+
+        self.assertEqual(await process.wait(), 1)
+        self.assertEqual(process.failure_summary, "provider rate limited")
+
     async def test_term_then_force_kill(self) -> None:
         process = await start_process(
             [
@@ -333,6 +346,47 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.get("/styles.css")
                 self.assertEqual(response.status, 200)
                 self.assertEqual(await response.text(), "body {}")
+            finally:
+                await client.close()
+
+    async def test_launcher_shutdown_only_accepts_an_idle_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            server = TestServer(create_app(state))
+            client = TestClient(server)
+            await client.start_server()
+            try:
+                response = await client.post("/api/shutdown", json={})
+                self.assertEqual(response.status, 200)
+                self.assertEqual((await response.json())["status"], "shutting_down")
+                self.assertTrue(state._shutdown.is_set())
+            finally:
+                await client.close()
+
+            state._shutdown.clear()
+            state.records["active"] = RunRecord(
+                run_id="active",
+                profile_id="profile",
+                model="provider/model",
+                status="running",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                project_root=str(root),
+            )
+            server = TestServer(create_app(state))
+            client = TestClient(server)
+            await client.start_server()
+            try:
+                response = await client.post("/api/shutdown", json={})
+                self.assertEqual(response.status, 409)
+                self.assertEqual((await response.json())["code"], "active_runs")
+                self.assertFalse(state._shutdown.is_set())
             finally:
                 await client.close()
 

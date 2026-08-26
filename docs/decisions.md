@@ -439,3 +439,35 @@ Consequences:
 The public Plugin ID, Plugin folder, marketplace entry, manifest display name, and Codex-facing Skill are all `aiworker-relay` / AIworker Relay. Existing alpha users remove the old `external-workers` Plugin and install the new identity; no long-term compatibility alias is maintained.
 
 The application-data directory, keyring service, Python distribution, and `external-workersd` process name remain internal stable identifiers. Changing those would require a separate, accepted data-migration contract and is not part of a product-name change.
+
+## D028 — Reconcile the local runtime only during explicit setup
+
+Status: Accepted
+
+Reason:
+
+An installed Plugin bundle and its application-local runtime can drift. Replacing a runtime while a worker is active risks terminating work, while doing it implicitly during dispatch hides a material local mutation inside a task request.
+
+Alternatives considered:
+
+Updating on every dispatch, adding a background update watcher, leaving runtime drift undetected, or requiring the user to run pip and manage venvs were not accepted.
+
+Consequences:
+
+`$aiworker-relay setup` compares the canonical package version with runtime and daemon versions. It replaces only a verified idle runtime, keeps one short-lived `venv.previous` recovery copy, and refuses dispatch while versions differ. An active run produces an explicit deferred result; an unknown daemon state blocks setup rather than risking an unrelated process.
+
+## D029 — Use a Git-backed marketplace for public pre-release distribution
+
+Status: Accepted
+
+Reason:
+
+The public product needs a normal Codex installation path rather than a local filesystem checkout. The official marketplace contract supports a Git catalog and a `git-subdir` Plugin source in the same repository.
+
+Alternatives considered:
+
+Presenting the local marketplace as the public channel, building a separate custom installer, or publishing a duplicate runtime package were not accepted.
+
+Consequences:
+
+The public catalog at `.agents/plugins/marketplace.json` refers to `https://github.com/liuyejinghong/aiworker-relay.git`, `./plugins/aiworker-relay`, and `main`. Source-checkout development may still use a local marketplace, but public installation and update instructions use `codex plugin marketplace add` and `codex plugin add`. The actual Codex Desktop update behavior remains an explicit release acceptance item.

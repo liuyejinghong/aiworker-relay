@@ -1,6 +1,6 @@
-# 更新与发布生命周期（提案）
+# 更新与发布生命周期
 
-状态：Proposed。本文定义下一开发包的目标、边界和验收标准；在用户确认前，不改变现有更新行为，也不新增 ADR。
+状态：v0.1.6 已实现并在用户应用数据中完成一次历史 runtime 收敛。Git-backed Marketplace 的干净新装和已安装 bundle 更新仍待真实 Codex 验收。
 
 ## 为什么需要这一项
 
@@ -9,7 +9,7 @@ AIworker Relay 有两个独立但必须保持一致的交付物：
 1. Codex Plugin bundle：manifest、Skill、bootstrap launcher、Python 源码与静态看板资源；
 2. 用户应用数据目录中的专用 Python runtime：实际运行 `orch` 与 `external-workersd` 的 venv。
 
-2026-08-26 的本机核验已经证明两者会分离：已安装 Plugin 为 `0.1.1`，而应用级 `orch version` 为 `0.1.0`。当前 launcher 只在 runtime 缺失时执行安装；已有 venv 时会直接复用旧 `orch`。因此重新安装 Plugin 并不等于实际运行代码已升级。
+2026-08-26 的本机核验已经证明两者会分离：已安装 Plugin 为 `0.1.1`，而应用级 `orch version` 为 `0.1.0`。当时的 launcher 只在 runtime 缺失时执行安装；已有 venv 时会直接复用旧 `orch`。当前 launcher 已改为比较并报告三者版本，只在显式 setup 且 daemon 确认空闲时执行可恢复替换。
 
 这不是单纯的版本显示问题：新 Skill、看板和 runtime 的行为可能不再匹配，用户也无法从当前界面看出这个状态。
 
@@ -39,11 +39,11 @@ AIworker Relay 有两个独立但必须保持一致的交付物：
 | daemon version | `/api/health` 与 `/api/overview` | 确认正在服务看板的代码版本 |
 | profile schema version | `profiles.json` 内的版本字段，当前为 `1` | 仅在持久化 Profile 格式改变时决定是否迁移 |
 
-实施时将引入 Plugin 根目录的单一 `VERSION` 文件：
+实现使用 Python package 内的单一 `src/orchestrator/VERSION` 文件：
 
 - Python package build metadata 从它派生；
-- source-tree 的 `orch version` 从 package metadata 或该文件派生；
-- `plugin.json` 的 `version` 是 release 时生成并校验的镜像，不再由人手独立维护。
+- source-tree 与安装后的 `orch version` 都从该文件派生；
+- `plugin.json` 的 `version` 是经测试校验的 release 镜像，不再由人手独立维护。
 
 release 检查必须拒绝 `VERSION`、manifest 与已构建 package 三者不一致的包。此项只消除当前已有的三个手工版本点，不引入通用版本管理框架。
 
@@ -80,7 +80,7 @@ Codex Marketplace / Plugin UI
 | `update_required` | runtime 缺失、无法执行 version，或版本不同 | setup 进入更新判定 |
 | `update_deferred_active_run` | 受健康检查确认的 daemon 有 `starting`、`running` 或 `stopping` external run | 保留原 runtime 与进程；报告需在 run 结束后重新 setup |
 | `update_blocked_unknown_daemon` | daemon PID 存在，但 health / overview 与记录不一致或无法确认活跃状态 | 不替换 runtime；报告恢复阻塞，避免误杀未知进程 |
-| `update_failed_restored` | 新 runtime 未通过安装、version 或 health 检查，旧 runtime 已恢复 | 保留原可用 runtime；展示失败原因 |
+| 更新失败后已恢复 | 新 runtime 未通过安装、version 或 health 检查，旧 runtime 已恢复 | setup 明确报告恢复结果与失败原因 |
 
 “活跃”只指由 `external-workersd` 实际拥有的 external run。原生 Codex worker 不属于本机进程监管边界，因此不会被本更新流程停止或作为 update blocker。
 
@@ -88,9 +88,9 @@ Codex Marketplace / Plugin UI
 
 Python venv 内的入口脚本通常包含绝对路径，不能把一个已验证的临时 venv 直接改名为 `venv`。因此不采用看似原子的“创建 `venv.next` 后重命名”方案。
 
-下一版使用一条有界的恢复路径：
+当前版本使用一条有界的恢复路径：
 
-1. launcher 从新 bundle 的 `VERSION` 与现有 `orch version` 读取目标和现状；不依赖全局 Python 依赖。
+1. launcher 从新 bundle 的 package `VERSION` 与现有 `orch version` 读取目标和现状；不依赖全局 Python 依赖。
 2. 若有 daemon，先以 `daemon.json`、`/api/health` 和 `/api/overview` 交叉确认它就是本产品的 daemon，且没有活跃 external run。
 3. 只在该判定成立时，请求 idle daemon 正常退出；首个兼容旧 runtime 的升级桥接仅可终止 health 返回 PID 与记录一致的 idle daemon。
 4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv` 并从当前 Plugin bundle 安装 runtime。
@@ -99,11 +99,11 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 如果进程在第 4 至第 5 步之间被中断，下一次 setup 发现 `venv` 缺失且 `venv.previous` 存在时先恢复旧 runtime，再报告或重新尝试更新。该临时备份只解决一次更新事务的失败恢复，不形成长期多版本管理系统。
 
-为在 macOS、Windows 与 Linux 上一致地替换 idle daemon，下一 runtime 会增加一个仅供 launcher 使用的窄本地“正常退出”控制动作。它不是通用管理 API，也不作用于活跃 run。首个从旧 runtime 升级的 bridge 无法假设旧 daemon 已支持该动作，因而只能在前述三项事实均匹配、且 overview 明确无活跃 run 时处理其精确 PID。
+为在 macOS、Windows 与 Linux 上一致地替换 idle daemon，当前 runtime 提供一个仅供 launcher 使用的窄本地“正常退出”控制动作。它不是通用管理 API，也不作用于活跃 run。首个从旧 runtime 升级的 bridge 无法假设旧 daemon 已支持该动作，因而只能在前述三项事实均匹配、且 overview 明确无活跃 run 时处理其精确 PID。
 
 ## 持久数据与迁移
 
-下一更新包不改变 Profile schema：`profiles.json` 保持版本 `1`，Keyring 条目不移动，`daemon.json` 只作为可重建的运行记录。
+本次更新包不改变 Profile schema：`profiles.json` 保持版本 `1`，Keyring 条目不移动，`daemon.json` 只作为可重建的运行记录。
 
 未来只有某个真实需求改变 Profile 持久格式时才增加一段从已知旧版本到新版本的显式迁移。那一段迁移必须：
 
@@ -116,11 +116,11 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 ## 分发策略
 
-### 当前 alpha
+### 源码开发
 
-继续使用 local marketplace。它适合开发、私有测试与用户当前的安装体验，但不应被描述为一个已验证的自动更新渠道。OpenAI 官方文档明确说明：本地 marketplace 安装的 Plugin 从 Codex cache 加载；`marketplace upgrade` 的文档语义是刷新 Git marketplace snapshot，而不是保证已安装 Plugin 自动升级。[OpenAI 插件打包文档](https://developers.openai.com/plugins/build/plugins)
+local marketplace 只用于源码开发、私有测试，不应被描述为普通开发者的安装或更新渠道。OpenAI 官方文档明确说明：`marketplace upgrade` 的文档语义是刷新 Git marketplace snapshot，而不是保证已安装 Plugin 自动升级。[OpenAI 插件打包文档](https://developers.openai.com/plugins/build/plugins)
 
-因此 alpha 的安装/更新验收必须真实操作一次 Codex Desktop：确认新 manifest 是否出现、已安装 Plugin 如何切换到新版本、随后 setup 是否把 runtime 收敛到相同版本。没有观察到的 UI 能力不写入用户说明。
+Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：确认新 manifest 是否出现、已安装 Plugin 如何切换到新版本、随后 setup 是否把 runtime 收敛到相同版本。没有观察到的 UI 能力不写入用户说明。
 
 ### 面向正常开发者的渠道（推荐）
 
@@ -135,11 +135,11 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 ## 实施包与文件责任
 
-### P0 — 修复现有版本漂移
+### P0 — 已在本地实现，待随公开 bundle 发布
 
 | 所有权 | 最小变更 |
 | --- | --- |
-| `plugins/aiworker-relay/VERSION`、`pyproject.toml`、`src/orchestrator/__init__.py`、`.codex-plugin/plugin.json` | 建立一份 canonical release version，并在构建/测试时验证 manifest 与 runtime 一致。 |
+| `plugins/aiworker-relay/src/orchestrator/VERSION`、`pyproject.toml`、`src/orchestrator/__init__.py`、`.codex-plugin/plugin.json` | 建立一份 canonical release version，并在构建/测试时验证 manifest 与 runtime 一致。 |
 | `scripts/launch_external_workers.py` | 读取 bundle/runtime 版本；setup 执行更新判定、活跃 run 保护和有界恢复。dispatch 在 mismatch 时明确拒绝并引导 setup。 |
 | `src/orchestrator/cli.py`、`daemon.py` | 提供仅用于替换 idle daemon 的窄内部控制路径，并报告 daemon version。 |
 | `src/orchestrator/config.py` | 只增加本次 venv 恢复所需的路径与原子记录；不改变 Profile 格式。 |
@@ -178,8 +178,7 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 ## 仍需用户确认的产品选择
 
-本提案建议把 runtime 收敛绑定到显式 setup，并把 Git-backed marketplace 作为 alpha 之后的渠道。以下选择仍需要在开始实现前确认：
+已确认 runtime 收敛绑定到显式 setup，Git-backed marketplace 是面向其他开发者的渠道。仍待后续产品选择：
 
-- Git-backed marketplace 是否成为首个面向其他开发者的分发方式，还是先继续限定在 local alpha；
-- major breaking change 是否要求用户显式确认后才更新，而 patch/minor 可在 setup 中自动收敛；
+- major breaking change 是否要求用户显式确认后才更新，而 patch/minor 可沿用 setup 的既有本机安装授权；
 - 看板是否只显示当前版本与失败原因，还是确有需要保留面向用户的 release history。
