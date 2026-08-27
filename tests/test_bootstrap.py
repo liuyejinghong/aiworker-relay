@@ -125,6 +125,7 @@ class BootstrapSmokeTests(unittest.TestCase):
             project_root=Path.cwd(),
             codex_path=codex_path,
             node_path=node_path,
+            expected_version=__version__,
             allow_loaded_replacement=False,
         )
         run_orch.assert_called_once_with(
@@ -228,6 +229,7 @@ class BootstrapSmokeTests(unittest.TestCase):
                         project_root=root / "project",
                         codex_path=None,
                         node_path=None,
+                        expected_version=__version__,
                     )
 
         self.assertEqual(run.call_count, 1)
@@ -258,7 +260,7 @@ class BootstrapSmokeTests(unittest.TestCase):
                     launcher,
                     "_wait_for_persistent_daemon",
                     side_effect=launcher.RuntimeUpdateError("health failed"),
-                ),
+                ) as wait_for_daemon,
                 self.assertRaisesRegex(
                     launcher.PersistentEntryChangedError, "health failed"
                 ),
@@ -268,7 +270,13 @@ class BootstrapSmokeTests(unittest.TestCase):
                     project_root=root / "project",
                     codex_path=None,
                     node_path=None,
+                    expected_version="0.1.0",
                 )
+
+            wait_for_daemon.assert_called_once_with(
+                project_root=root / "project",
+                expected_version="0.1.0",
+            )
 
     def test_wait_for_fixed_port_release_retries_after_owned_entry_teardown(self) -> None:
         with (
@@ -418,7 +426,10 @@ class BootstrapSmokeTests(unittest.TestCase):
             (runtime / "bin/python").touch()
             (runtime / "bin/orch").touch()
             snapshot = launcher.DaemonSnapshot(
-                "active", version="0.1.1", active_runs=("run-1",)
+                "active",
+                version="0.1.1",
+                active_runs=("run-1",),
+                project_root=str(Path.cwd().resolve()),
             )
             with (
                 patch.object(launcher, "app_data_root", return_value=root),
@@ -430,6 +441,35 @@ class BootstrapSmokeTests(unittest.TestCase):
         self.assertIsNone(orch)
         self.assertIn("run-1", deferred or "")
         self.assertFalse(stopped)
+
+    def test_reconcile_never_stops_another_projects_idle_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv/bin"
+            runtime.mkdir(parents=True)
+            (runtime / "python").touch()
+            (runtime / "orch").touch()
+            snapshot = launcher.DaemonSnapshot(
+                "idle",
+                version="0.1.0",
+                endpoint="http://127.0.0.1:49178",
+                persistent=True,
+                project_root=str(root / "another-project"),
+            )
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
+                patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+                patch.object(launcher, "replace_runtime") as replace,
+            ):
+                with self.assertRaisesRegex(
+                    launcher.RuntimeUpdateError, "another project"
+                ):
+                    launcher.reconcile_runtime()
+
+            shutdown.assert_not_called()
+            replace.assert_not_called()
 
     def test_pending_previous_marker_prevents_runtime_status_from_being_up_to_date(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -490,6 +530,7 @@ class BootstrapSmokeTests(unittest.TestCase):
                 "idle",
                 version=__version__,
                 endpoint="http://127.0.0.1:61234",
+                project_root=str(Path.cwd().resolve()),
             )
             with (
                 patch.object(launcher, "app_data_root", return_value=root),
@@ -546,7 +587,14 @@ class BootstrapSmokeTests(unittest.TestCase):
                     launcher.reconcile_runtime()
 
             shutdown.assert_called_once_with(old_snapshot)
-            ensure.assert_called_once()
+            ensure.assert_called_once_with(
+                runtime=root / "venv",
+                project_root=Path.cwd(),
+                codex_path=None,
+                node_path=None,
+                expected_version="0.1.0",
+                allow_loaded_replacement=True,
+            )
             run_orch.assert_called_once()
             validate.assert_called_once_with("0.1.0", project_root=Path.cwd())
 
@@ -820,6 +868,38 @@ class BootstrapSmokeTests(unittest.TestCase):
                     self.assertFalse(stopped)
                 shutdown.assert_not_called()
 
+    def test_interrupted_recovery_never_mutates_another_projects_runtime(self) -> None:
+        for candidate_exists in (False, True):
+            with self.subTest(candidate_exists=candidate_exists), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                orch, previous = self._prepare_candidate_transaction(root)
+                if not candidate_exists:
+                    launcher._remove_runtime_tree(root / "venv")
+                snapshot = launcher.DaemonSnapshot(
+                    "idle",
+                    version=__version__,
+                    endpoint="http://127.0.0.1:49178",
+                    persistent=True,
+                    project_root=str(root / "another-project"),
+                )
+                with (
+                    patch.object(launcher, "installed_runtime_version", return_value=__version__),
+                    patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                    patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+                ):
+                    with self.assertRaisesRegex(
+                        launcher.RuntimeUpdateError, "another project"
+                    ):
+                        launcher.restore_interrupted_runtime(
+                            root,
+                            project_root=Path.cwd(),
+                            expected_version=__version__,
+                        )
+
+                self.assertEqual(orch.exists(), candidate_exists)
+                self.assertTrue(previous.exists())
+                shutdown.assert_not_called()
+
     def test_interrupted_nonaccepted_candidate_active_or_unknown_is_untouched(self) -> None:
         for state in ("active", "unknown"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
@@ -829,6 +909,9 @@ class BootstrapSmokeTests(unittest.TestCase):
                     state,
                     active_runs=("run-1",) if state == "active" else (),
                     reason="identity unavailable" if state == "unknown" else None,
+                    project_root=(
+                        str(Path.cwd().resolve()) if state == "active" else None
+                    ),
                 )
                 with (
                     patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
@@ -855,7 +938,12 @@ class BootstrapSmokeTests(unittest.TestCase):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 orch, previous = self._prepare_candidate_transaction(root)
-                snapshot = launcher.DaemonSnapshot(state)
+                snapshot = launcher.DaemonSnapshot(
+                    state,
+                    project_root=(
+                        str(Path.cwd().resolve()) if state == "idle" else None
+                    ),
+                )
                 with (
                     patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
                     patch.object(launcher, "daemon_snapshot", return_value=snapshot),

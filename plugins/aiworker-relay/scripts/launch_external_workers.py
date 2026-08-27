@@ -390,6 +390,16 @@ def restore_interrupted_runtime(
         return None, False
     if previous.is_symlink() or not previous.is_dir():
         raise RuntimeUpdateError("runtime recovery is blocked: venv.previous is invalid")
+    requested_project_root = (project_root or Path.cwd()).resolve()
+    snapshot = daemon_snapshot(root)
+    if snapshot.state in {"active", "idle"} and (
+        snapshot.project_root is None
+        or Path(snapshot.project_root).resolve() != requested_project_root
+    ):
+        raise RuntimeUpdateError(
+            "runtime recovery is blocked because the persistent control plane "
+            "belongs to another project"
+        )
     if not runtime.exists():
         previous.replace(runtime)
         return None, False
@@ -397,9 +407,7 @@ def restore_interrupted_runtime(
         raise RuntimeUpdateError("runtime recovery is blocked: venv is invalid")
 
     expected = expected_version or bundle_version()
-    requested_project_root = (project_root or Path.cwd()).resolve()
     candidate_version = installed_runtime_version(venv_orch(runtime))
-    snapshot = daemon_snapshot(root)
     candidate_accepted = candidate_version == expected and _candidate_daemon_is_accepted(
         snapshot,
         expected_version=expected,
@@ -572,6 +580,13 @@ def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
     expected_version = bundle_version()
     actual_version = installed_runtime_version(orch)
     snapshot = daemon_snapshot(root)
+    if snapshot.state in {"active", "idle"} and (
+        snapshot.project_root is None
+        or Path(snapshot.project_root).resolve() != Path.cwd().resolve()
+    ):
+        raise RuntimeUpdateError(
+            "setup is blocked because the persistent control plane belongs to another project"
+        )
     runtime_needs_replace = actual_version != expected_version
     daemon_needs_restart = snapshot.state in {"active", "idle"} and (
         runtime_needs_replace
@@ -708,6 +723,7 @@ def rollback_runtime_update(
             project_root=project_root,
             codex_path=codex_path,
             node_path=node_path,
+            expected_version=old_version,
             allow_loaded_replacement=stopped_verified_daemon,
         )
         exit_code = run_orch(
@@ -857,12 +873,13 @@ def _wait_for_fixed_port_release(*, timeout: float = 5.0) -> None:
             time.sleep(0.05)
 
 
-def _wait_for_persistent_daemon(*, project_root: Path, timeout: float = 5.0) -> None:
+def _wait_for_persistent_daemon(
+    *, project_root: Path, expected_version: str, timeout: float = 5.0
+) -> None:
     """Wait for the LaunchAgent to publish the expected loopback control plane."""
 
     deadline = time.monotonic() + timeout
     expected_project_root = project_root.resolve()
-    expected_version = bundle_version()
     while time.monotonic() < deadline:
         snapshot = daemon_snapshot(app_data_root())
         if (
@@ -886,6 +903,7 @@ def ensure_macos_persistent_entry(
     project_root: Path,
     codex_path: Path | None,
     node_path: Path | None,
+    expected_version: str,
     allow_loaded_replacement: bool = False,
 ) -> None:
     """Install and start the macOS user entry without changing a live run."""
@@ -960,7 +978,10 @@ def ensure_macos_persistent_entry(
             f"could not start the AIworker Relay LaunchAgent: {detail}"
         )
     try:
-        _wait_for_persistent_daemon(project_root=project_root)
+        _wait_for_persistent_daemon(
+            project_root=project_root,
+            expected_version=expected_version,
+        )
     except RuntimeUpdateError as exc:
         raise PersistentEntryChangedError(str(exc)) from exc
 
@@ -1014,12 +1035,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             codex_path = current_codex_cli()
             node_path = current_node_cli()
             project_root = Path.cwd()
+            expected_version = bundle_version()
             try:
                 ensure_macos_persistent_entry(
                     runtime=orch.parent.parent,
                     project_root=project_root,
                     codex_path=codex_path,
                     node_path=node_path,
+                    expected_version=expected_version,
                     allow_loaded_replacement=stopped_verified_daemon,
                 )
                 exit_code = run_orch(
@@ -1033,7 +1056,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise RuntimeUpdateError(
                         f"persistent control-plane setup failed with exit code {exit_code}"
                     )
-                _validate_setup_result(bundle_version(), project_root=project_root)
+                _validate_setup_result(expected_version, project_root=project_root)
             except Exception as failure:
                 if candidate_transaction or stopped_verified_daemon:
                     entry_was_changed = isinstance(
