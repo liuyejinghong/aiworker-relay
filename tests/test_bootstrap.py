@@ -27,6 +27,24 @@ LAUNCHER_SPEC.loader.exec_module(launcher)
 
 
 class BootstrapSmokeTests(unittest.TestCase):
+    def test_launcher_loopback_opener_disables_redirects(self) -> None:
+        opener = MagicMock()
+        response = MagicMock()
+        response.status = 200
+        response.read.return_value = b"{}"
+        opener.open.return_value.__enter__.return_value = response
+        with patch.object(
+            launcher.urllib.request, "build_opener", return_value=opener
+        ) as build_opener:
+            launcher._local_request("http://127.0.0.1:49178", "/api/health")
+
+        self.assertTrue(
+            any(
+                isinstance(handler, launcher._NoRedirect)
+                for handler in build_opener.call_args.args
+            )
+        )
+
     def test_package_exposes_a_version(self) -> None:
         self.assertTrue(__version__)
 
@@ -87,7 +105,11 @@ class BootstrapSmokeTests(unittest.TestCase):
 
         with (
             patch.object(launcher, "runtime_status", return_value=status),
-            patch.object(launcher, "reconcile_runtime", return_value=(runtime, None)) as reconcile,
+            patch.object(
+                launcher,
+                "reconcile_runtime",
+                return_value=(runtime, None, False),
+            ) as reconcile,
             patch.object(launcher, "current_codex_cli", return_value=codex_path),
             patch.object(launcher, "current_node_cli", return_value=node_path),
             patch.object(launcher, "ensure_macos_persistent_entry") as persistent_entry,
@@ -103,6 +125,7 @@ class BootstrapSmokeTests(unittest.TestCase):
             project_root=Path.cwd(),
             codex_path=codex_path,
             node_path=node_path,
+            allow_loaded_replacement=False,
         )
         run_orch.assert_called_once_with(
             runtime,
@@ -179,6 +202,37 @@ class BootstrapSmokeTests(unittest.TestCase):
             ],
         )
         self.assertNotIn("key", " ".join(arguments).lower())
+
+    def test_loaded_launch_agent_without_verified_daemon_is_not_booted_out(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(launcher.sys, "platform", "darwin"),
+                patch.object(
+                    launcher,
+                    "daemon_snapshot",
+                    return_value=launcher.DaemonSnapshot("missing"),
+                ),
+                patch.object(
+                    launcher.subprocess,
+                    "run",
+                    return_value=MagicMock(returncode=0),
+                ) as run,
+                patch.object(launcher, "_write_launch_agent") as write_agent,
+            ):
+                with self.assertRaisesRegex(
+                    launcher.RuntimeUpdateError, "no verified daemon identity"
+                ):
+                    launcher.ensure_macos_persistent_entry(
+                        runtime=root / "venv",
+                        project_root=root / "project",
+                        codex_path=None,
+                        node_path=None,
+                    )
+
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][1], "print")
+        write_agent.assert_not_called()
 
     def test_wait_for_fixed_port_release_retries_after_owned_entry_teardown(self) -> None:
         with (
@@ -298,10 +352,11 @@ class BootstrapSmokeTests(unittest.TestCase):
                 patch.object(launcher, "installed_runtime_version", return_value="0.1.1"),
                 patch.object(launcher, "daemon_snapshot", return_value=snapshot),
             ):
-                orch, deferred = launcher.reconcile_runtime()
+                orch, deferred, stopped = launcher.reconcile_runtime()
 
         self.assertIsNone(orch)
         self.assertIn("run-1", deferred or "")
+        self.assertFalse(stopped)
 
     def test_idle_transient_daemon_is_restarted_for_the_stable_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -322,10 +377,11 @@ class BootstrapSmokeTests(unittest.TestCase):
                 patch.object(launcher, "daemon_snapshot", return_value=snapshot),
                 patch.object(launcher, "shutdown_idle_daemon") as shutdown,
             ):
-                actual_orch, deferred = launcher.reconcile_runtime()
+                actual_orch, deferred, stopped = launcher.reconcile_runtime()
 
         self.assertEqual(actual_orch, orch)
         self.assertIsNone(deferred)
+        self.assertTrue(stopped)
         shutdown.assert_called_once_with(snapshot)
 
     def test_failed_runtime_replacement_restores_the_previous_runtime(self) -> None:

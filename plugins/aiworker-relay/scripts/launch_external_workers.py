@@ -32,6 +32,13 @@ class RuntimeUpdateError(RuntimeError):
     """The app-local runtime cannot be safely reconciled."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never carry a local capability to a redirect target."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class DaemonSnapshot:
     """The minimum facts needed before setup can replace a runtime."""
@@ -165,7 +172,9 @@ def _local_request(
         headers=headers,
         method=method,
     )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect()
+    )
     try:
         with opener.open(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
@@ -194,7 +203,14 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
         return DaemonSnapshot("unknown", reason="daemon record is invalid")
     pid = record.get("pid")
     port = record.get("port")
-    if not isinstance(pid, int) or not isinstance(port, int) or not 1 <= port <= 65535:
+    if (
+        not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(port, int)
+        or isinstance(port, bool)
+        or not 1 <= port <= 65535
+    ):
         return DaemonSnapshot("unknown", reason="daemon record has no valid PID or port")
     process_state = _process_state(pid)
     if process_state is False:
@@ -447,7 +463,7 @@ def replace_runtime() -> Path:
     return orch
 
 
-def reconcile_runtime() -> tuple[Path | None, str | None]:
+def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
     """Prepare setup without updating during a live external run."""
 
     root = app_data_root()
@@ -466,21 +482,28 @@ def reconcile_runtime() -> tuple[Path | None, str | None]:
     needs_change = runtime_needs_replace or daemon_needs_restart
     if snapshot.state == "active" and needs_change:
         run_hint = ", ".join(snapshot.active_runs) or "an external run"
-        return None, (
+        return (
+            None,
             "runtime update deferred while "
-            f"{run_hint} remains active; rerun setup after it finishes"
+            f"{run_hint} remains active; rerun setup after it finishes",
+            False,
         )
     if snapshot.state == "unknown":
         raise RuntimeUpdateError(
             f"setup is blocked because daemon state is unknown: {snapshot.reason}"
         )
-    if snapshot.state == "idle" and daemon_needs_restart:
+    stopped_verified_daemon = snapshot.state == "idle" and daemon_needs_restart
+    if stopped_verified_daemon:
         shutdown_idle_daemon(snapshot)
     if runtime_needs_replace:
-        return (replace_runtime() if runtime.exists() else install_runtime()), None
+        return (
+            replace_runtime() if runtime.exists() else install_runtime(),
+            None,
+            stopped_verified_daemon,
+        )
     if not orch.is_file():
         raise RuntimeUpdateError("local runtime is incomplete; rerun setup after resolving it")
-    return orch, None
+    return orch, None, stopped_verified_daemon
 
 
 def _validate_setup_result(expected_version: str) -> None:
@@ -657,6 +680,7 @@ def ensure_macos_persistent_entry(
     project_root: Path,
     codex_path: Path | None,
     node_path: Path | None,
+    allow_loaded_replacement: bool = False,
 ) -> None:
     """Install and start the macOS user entry without changing a live run."""
 
@@ -694,6 +718,10 @@ def ensure_macos_persistent_entry(
         text=True,
     ).returncode == 0
     if loaded:
+        if not allow_loaded_replacement:
+            raise RuntimeUpdateError(
+                "setup is blocked because the loaded LaunchAgent has no verified daemon identity"
+            )
         result = subprocess.run(
             ["launchctl", "bootout", target],
             check=False,
@@ -762,7 +790,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "setup":
             if status.get("update_status") in {"runtime_missing", "update_required"}:
                 print("aiworker-relay: preparing the local control plane...", flush=True)
-            orch, deferred = reconcile_runtime()
+            orch, deferred, stopped_verified_daemon = reconcile_runtime()
             if deferred:
                 print(f"aiworker-relay: {deferred}")
                 return 0
@@ -774,6 +802,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project_root=Path.cwd(),
                 codex_path=codex_path,
                 node_path=node_path,
+                allow_loaded_replacement=stopped_verified_daemon,
             )
             command = [
                 "setup",

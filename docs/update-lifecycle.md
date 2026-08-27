@@ -99,7 +99,7 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 如果进程在第 4 至第 5 步之间被中断，下一次 setup 发现 `venv` 缺失且 `venv.previous` 存在时先恢复旧 runtime，再报告或重新尝试更新。该临时备份只解决一次更新事务的失败恢复，不形成长期多版本管理系统。
 
-为在 macOS、Windows 与 Linux 上一致地替换 idle daemon，当前 runtime 提供一个仅供 launcher 使用的窄本地“正常退出”控制动作。它不是通用管理 API，也不作用于活跃 run。launcher 只对 capability 与 health/overview 身份均匹配的 idle daemon 调用该动作；控制动作缺失、认证失败或身份不完整都会保持更新阻塞，不会退回到直接处理 PID。
+为在 macOS、Windows 与 Linux 上一致地替换 idle daemon，当前 runtime 提供一个仅供 launcher 使用的窄本地“正常退出”控制动作。它不是通用管理 API，也不作用于活跃 run。launcher 只对 capability 与 health/overview 身份均匹配的 idle daemon 调用该动作；控制动作缺失、认证失败或身份不完整都会保持更新阻塞，不会退回到直接处理 PID。macOS 仅在同一次 setup 已完成该受控 idle shutdown 时，才允许卸载随后处于 loaded 但无 daemon record 的 owned LaunchAgent；其他 missing/stale record 与 loaded entry 组合一律视为未知并阻塞，不猜测 active run 状态。
 
 ## 持久数据与迁移
 

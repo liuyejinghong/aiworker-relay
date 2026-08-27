@@ -26,10 +26,19 @@ class CLIError(RuntimeError):
     """A user-actionable launcher or local API error."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never carry a local capability to a redirect target."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 def _loopback_open(request: urllib.request.Request | str, *, timeout: float):
     """Open a local control-plane URL without inheriting desktop proxies."""
 
-    return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect()
+    ).open(
         request, timeout=timeout
     )
 

@@ -38,6 +38,7 @@
 - 首版跨平台目标是 macOS、Windows 和具备系统密钥服务的桌面 Linux。
 - 本地控制面是单个持久 `external-workersd`：Python 3.12+、`asyncio` 与 `aiohttp`；同一进程服务本机 Web、SSE、状态 API 与外部 run 监管。它固定绑定 loopback `127.0.0.1:49178`；macOS 的 setup 将该同一进程注册为用户级 LaunchAgent。一个活跃 daemon 绑定一个项目根目录；第二个项目不得静默复用它。
 - 每次 `external-workersd` 启动生成一个随机 capability，写入用户专属且 owner-only 的 `daemon.json`；health/overview、错误、日志、URL 与静态 JavaScript 不返回该值。浏览器只使用 host-only、HttpOnly、SameSite=Strict cookie；CLI/launcher 只使用 `X-AIworker-Capability`，两种模式不混用。CLI/launcher 必须用 capability 和 health 的 PID、端口、项目根、runtime 根、版本及 persistent 状态确认 daemon 身份；旧记录没有 capability 且 PID 仍存活时视为 unknown，不复用、停止、杀进程或覆盖。
+- v0.1 信任能够发起任意原始 loopback HTTP 的本地进程。浏览器 cookie 不按端口隔离，因此它只作为 hostile browser origin / CSRF 防护，不声称隔离可读取其他 `127.0.0.1` 端口 cookie 的本地进程；若未来要防该主体，必须另行接受不同的 browser bootstrap 或 IPC 边界。携带 capability 的 CLI/launcher HTTP 请求不得跟随重定向。
 - loopback API 严格接受 `127.0.0.1:<实际端口>` Host；浏览器 API/SSE 只接受同源 Origin、Fetch Metadata 的 same-origin/none、非 no-cors 且非 subresource 请求。静态首个顶层文档导航可以领取 cookie，同源静态资源可以加载；API JSON 写入必须声明 `application/json`（可带 charset），shutdown 同样解析 JSON 对象。
 - 页面使用静态 HTML、CSS 和原生 JavaScript；状态使用 SSE 推送，用户操作使用 HTTP `POST`，不使用 React、WebSocket、Node 常驻进程或桌面壳。
 - 外部 run 用 `asyncio` 管理生命周期，`psutil` 读取 RSS 与在停止时枚举进程树。只有活跃外部 run 每 2 秒采样一次；原生 worker 不采样。

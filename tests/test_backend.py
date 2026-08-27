@@ -16,6 +16,7 @@ from aiohttp.test_utils import TestClient, TestServer
 import truststore
 
 from orchestrator import __version__
+from orchestrator import cli as orchestrator_cli
 from orchestrator.config import ProfileStore, atomic_write_json, user_data_root
 from orchestrator.cli import CLIError, ensure_daemon
 from orchestrator.daemon import (
@@ -26,6 +27,7 @@ from orchestrator.daemon import (
     OPENROUTER_CURRENT_KEY_URL,
     APIError,
     DaemonState,
+    _daemon_record_lock,
     _http_json,
     create_app,
     fetch_openrouter_account_summary,
@@ -39,6 +41,20 @@ from orchestrator.worktree import create_worktree
 
 
 class ProfileAndPacketTests(unittest.TestCase):
+    def test_cli_loopback_opener_disables_redirects(self) -> None:
+        opener = MagicMock()
+        with patch(
+            "orchestrator.cli.urllib.request.build_opener", return_value=opener
+        ) as build_opener:
+            orchestrator_cli._loopback_open("http://127.0.0.1:49178", timeout=0.1)
+
+        self.assertTrue(
+            any(
+                isinstance(handler, orchestrator_cli._NoRedirect)
+                for handler in build_opener.call_args.args
+            )
+        )
+
     def test_provider_requests_use_the_system_trust_store(self) -> None:
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"data": []}'
@@ -799,6 +815,21 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
             record = json.loads(state.app_paths.daemon_file.read_text(encoding="utf-8"))
             self.assertEqual(record["pid"], state.pid)
             self.assertEqual(record["capability"], state.capability)
+
+    def test_daemon_record_claim_is_serialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            state.port = 49178
+            with _daemon_record_lock(state.app_paths.daemon_file):
+                with self.assertRaisesRegex(RuntimeError, "being updated"):
+                    state.write_daemon_file()
 
     async def test_persistent_daemon_has_no_idle_shutdown_timer(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

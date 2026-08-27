@@ -19,6 +19,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -86,6 +88,46 @@ class APIError(Exception):
         self.code = code
         self.message = message
         self.status = status
+
+
+@contextmanager
+def _daemon_record_lock(daemon_file: Path) -> Iterator[None]:
+    """Serialize daemon record claims and cleanup without a persistent owner."""
+
+    lock_file = daemon_file.with_name(f".{daemon_file.name}.lock")
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o600)
+    locked = False
+    try:
+        os.chmod(lock_file, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if os.fstat(descriptor).st_size == 0:
+                    os.write(descriptor, b"\0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise RuntimeError("daemon.json is being updated by another process") from exc
+        locked = True
+        yield
+    finally:
+        if locked:
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def _listener_port(request: web.Request, state: DaemonState) -> int | None:
@@ -519,40 +561,47 @@ class DaemonState:
 
     def write_daemon_file(self) -> None:
         daemon_file = self.app_paths.daemon_file
-        existing = read_json(daemon_file)
-        if existing is None and daemon_file.exists():
-            raise RuntimeError("cannot replace an invalid daemon.json")
-        if isinstance(existing, dict):
-            existing_pid = existing.get("pid")
-            if not isinstance(existing_pid, int) or existing_pid <= 0:
+        with _daemon_record_lock(daemon_file):
+            existing = read_json(daemon_file)
+            if existing is None and daemon_file.exists():
                 raise RuntimeError("cannot replace an invalid daemon.json")
-            try:
-                os.kill(existing_pid, 0)
-            except ProcessLookupError:
-                pass
-            except PermissionError as exc:
-                raise RuntimeError(
-                    "cannot replace daemon.json while its recorded PID is inaccessible"
-                ) from exc
-            except OSError:
-                pass
-            else:
-                raise RuntimeError(
-                    "cannot replace daemon.json while its recorded daemon is active"
-                )
-        elif existing is not None:
-            raise RuntimeError("cannot replace an invalid daemon.json")
-        atomic_write_json(daemon_file, self._daemon_record())
-        os.chmod(daemon_file, 0o600)
+            if isinstance(existing, dict):
+                existing_pid = existing.get("pid")
+                if (
+                    not isinstance(existing_pid, int)
+                    or isinstance(existing_pid, bool)
+                    or existing_pid <= 0
+                ):
+                    raise RuntimeError("cannot replace an invalid daemon.json")
+                try:
+                    os.kill(existing_pid, 0)
+                except ProcessLookupError:
+                    pass
+                except PermissionError as exc:
+                    raise RuntimeError(
+                        "cannot replace daemon.json while its recorded PID is inaccessible"
+                    ) from exc
+                except OSError:
+                    pass
+                else:
+                    raise RuntimeError(
+                        "cannot replace daemon.json while its recorded daemon is active"
+                    )
+            elif existing is not None:
+                raise RuntimeError("cannot replace an invalid daemon.json")
+            atomic_write_json(daemon_file, self._daemon_record())
+            os.chmod(daemon_file, 0o600)
 
     def clear_daemon_file(self) -> None:
-        value = read_json(self.app_paths.daemon_file)
-        if (
-            isinstance(value, dict)
-            and value.get("pid") == self.pid
-            and value.get("capability") == self.capability
-        ):
-            self.app_paths.daemon_file.unlink(missing_ok=True)
+        daemon_file = self.app_paths.daemon_file
+        with _daemon_record_lock(daemon_file):
+            value = read_json(daemon_file)
+            if (
+                isinstance(value, dict)
+                and value.get("pid") == self.pid
+                and value.get("capability") == self.capability
+            ):
+                daemon_file.unlink(missing_ok=True)
 
     def _persist(self, record: RunRecord) -> None:
         record.updated_at = utc_now()
