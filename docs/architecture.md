@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.16 已实现固定持久本机控制面、静态看板、Profile、隔离 run 和证据路径；Git-backed Marketplace 的干净安装与两次更新、以及 bundle/runtime/daemon 的 setup 收敛均已实测。LaunchAgent 现在带有只覆盖自身的最小 `PATH`，以解析 setup 时确定的 Codex CLI 及其 Node runtime；不改写全局环境、Key 或 Profile。非交互式 `codex exec` 已使用受限的 workspace-write 自动审批。2026-08-27 的 NVIDIA dashboard-managed run 已在 detached worktree 中完成精确 marker 写入、文件/diff 回读和真实 `TERM → term_exited` 停止闭环；历史 provider `429` 与修复前本机启动失败保留为失败证据。Profile 的 `verified` 晋级规则仍是独立待决产品问题，不能因这一次窄验收被静默改写。
+状态：v0.1.16 已实现固定持久本机控制面、静态看板、Profile、隔离 run 和证据路径；Git-backed Marketplace 的干净安装与两次更新、以及 bundle/runtime/daemon 的 setup 收敛均已实测。LaunchAgent 现在带有只覆盖自身的最小 `PATH`，以解析 setup 时确定的 Codex CLI 及其 Node runtime；不改写全局环境、Key 或 Profile。非交互式 `codex exec` 使用 run-scoped permission profile 与 `--approve-for-me`，不再依赖可被项目配置削弱的默认 workspace-write 配置。2026-08-27 的 NVIDIA dashboard-managed run 已在 detached worktree 中完成精确 marker 写入、文件/diff 回读和真实 `TERM → term_exited` 停止闭环；新的 permission profile 已完成 macOS Codex 0.149 无 Provider 哨兵，修复后真实 Provider run 尚待 runtime 更新后回读。Profile 的 `verified` 晋级规则仍是独立待决产品问题，不能因这一次窄验收被静默改写。
 
 ## 核心原则
 
@@ -155,7 +155,7 @@ external run
 
 profile 与 run 必须分开。冻结 profile 只阻止新的 run；停止正在运行的 task 使用独立的终止流程。
 
-首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录，并使用 `--approve-for-me` 让非交互式 CLI 在 Codex 的 workspace-write 审批模式下执行工具。它不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。这个限制避免在首版实现 patch 同步和冲突处理层。
+首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录。runner 生成独立 `CODEX_HOME` 与 run-scoped `aiworker` permission profile，隔离 HOME / TMP / XDG，关闭工具网络和 login shell，不继承宿主环境，并拒绝真实 HOME 的隐藏配置、系统凭据路径、主 checkout `.env*` / `.codex` 与 source index。项目配置层被标记为 untrusted；安全字段与用户已选 reasoning 仍由 CLI 最高优先级固定。非交互式审批只使用 `--approve-for-me`，不再同时传旧 `--sandbox`，也不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。
 
 固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。v0.1 不接受 task 级档位覆盖；固定 Profile 原样使用其默认档位，只有 Profile 被设为“自动”时才不固定该 run 的具体档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
 

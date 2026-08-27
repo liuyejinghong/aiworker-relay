@@ -474,7 +474,7 @@ The public catalog at `.agents/plugins/marketplace.json` refers to `https://gith
 
 ## D030 — Use workspace-write approval for non-interactive external runs
 
-Status: Accepted
+Status: Superseded by D032
 
 Reason:
 
@@ -589,3 +589,21 @@ Writing and fsyncing the complete growing run record plus a JSONL event every tw
 Consequences:
 
 Active runs continue to sample RSS every two seconds and send live SSE updates. Each run keeps only the latest 120 samples plus total sample count, last RSS and peak RSS. Individual samples do not rewrite `run.json` or append `events.jsonl`; existing lifecycle checkpoints persist the current bounded telemetry. No metrics database, remote telemetry service or retention worker is introduced.
+
+## D038 — Pin a run-scoped permission profile above project configuration
+
+Status: Accepted
+
+Reason:
+
+`allow_login_shell=false` alone does not stop a normal shell command from sourcing the real user's startup files, and lower-priority `shell_environment_policy` values can be replaced by project configuration. The Provider process still needs the OpenRouter Key, while worker tool processes must not inherit that Key or the host environment.
+
+Alternatives considered:
+
+Keeping only the login-shell flag, trusting project configuration, using the global approvals/sandbox bypass, or adding a second execution backend were not accepted. Repeating temp-directory deny entries was also rejected after real Codex 0.149 and 0.151.0-alpha.7 probes showed that ordinary macOS sandboxed processes still receive `/tmp` and `/var/tmp` scratch access.
+
+Consequences:
+
+Each external run selects a deny-by-default `aiworker` permission profile from an isolated `CODEX_HOME`. The profile grants the detached worktree and run HOME write access, grants only required toolchain and linked-worktree Git metadata roots read access, disables tool network, isolates HOME / TMP / XDG, and gives spawned tools an explicit environment with `inherit="none"` and `OPENROUTER_API_KEY` excluded. The source checkout index and worktree `.env*` are denied. Project trust, login shell, shell policy, selected model and fixed reasoning are pinned at CLI precedence. `--approve-for-me` remains the non-interactive approval mechanism; the dangerous bypass is not used.
+
+This is not a claim that the external worker cannot access any host path. On current supported macOS Codex runtimes, ordinary sandboxed shell processes can still read and write shared system scratch directories despite permission-profile deny entries. Source checkout and real HOME probes are denied, but host temp remains a known pre-release security boundary tracked by Issues #1 and #2. The run-scoped profile must not be described as complete host isolation until that live sentinel passes on the installed runtime.

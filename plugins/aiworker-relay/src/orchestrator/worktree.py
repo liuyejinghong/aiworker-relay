@@ -18,6 +18,8 @@ class WorktreeError(RuntimeError):
 class WorktreeInfo:
     project_root: Path
     path: Path
+    git_common_dir: Path
+    source_checkout_index: Path
     source_head: str
     dirty_workspace_excluded: bool
 
@@ -67,9 +69,19 @@ def create_worktree(
     if path.exists():
         raise WorktreeError(f"worktree path already exists: {path}")
     _git(project_root, "worktree", "add", "--detach", str(path), head)
+    git_common_dir = Path(_git(path, "rev-parse", "--git-common-dir"))
+    if not git_common_dir.is_absolute():
+        git_common_dir = (path / git_common_dir).resolve()
+    source_checkout_index = Path(
+        _git(project_root, "rev-parse", "--git-path", "index")
+    )
+    if not source_checkout_index.is_absolute():
+        source_checkout_index = (project_root / source_checkout_index).resolve()
     return WorktreeInfo(
         project_root=project_root,
         path=path,
+        git_common_dir=git_common_dir,
+        source_checkout_index=source_checkout_index,
         source_head=head,
         dirty_workspace_excluded=dirty,
     )

@@ -311,6 +311,10 @@ class WorktreeTests(unittest.TestCase):
             (root / "uncommitted.txt").write_text("not copied\n", encoding="utf-8")
             info = create_worktree(root, "run-1")
             self.assertTrue(info.path.exists())
+            self.assertEqual(info.git_common_dir, (root / ".git").resolve())
+            self.assertEqual(
+                info.source_checkout_index, (root / ".git" / "index").resolve()
+            )
             self.assertTrue(info.dirty_workspace_excluded)
             self.assertEqual((info.path / "README.md").read_text(), "hello\n")
             self.assertFalse((info.path / "uncommitted.txt").exists())
@@ -325,7 +329,10 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
             ) as start:
                 await start_codex_run(
+                    project_root=root,
                     worktree=root,
+                    git_common_dir=root,
+                    source_checkout_index=root / "source.index",
                     run_dir=root / "run",
                     prompt="Create one file.",
                     model="nvidia/nemotron-3-ultra-550b-a55b:free",
