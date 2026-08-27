@@ -49,6 +49,7 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command[sandbox_index + 1], "workspace-write")
         self.assertIn("--approve-for-me", command)
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
+        self.assertEqual(command[command.index("-c") + 1], "allow_login_shell=false")
         self.assertEqual(command[command.index("--model") + 1], "provider/model")
 
         environment = start.await_args.kwargs["env"]
@@ -56,6 +57,7 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(environment["UNRELATED_SERVICE_TOKEN"], "ambient-secret")
 
         config = tomllib.loads(config_text)
+        self.assertFalse(config["allow_login_shell"])
         self.assertEqual(config["model"], "provider/model")
         self.assertEqual(config["model_reasoning_effort"], "high")
         policy = config["shell_environment_policy"]
