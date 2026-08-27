@@ -474,7 +474,7 @@ The public catalog at `.agents/plugins/marketplace.json` refers to `https://gith
 
 ## D030 — Use workspace-write approval for non-interactive external runs
 
-Status: Accepted
+Status: Superseded by D032
 
 Reason:
 
@@ -505,3 +505,21 @@ Consequences:
 The existing `external-workersd` gains a persistent mode and serves the fixed loopback address `127.0.0.1:49178`. On macOS, explicit setup writes one user-owned `com.aiworker.relay` LaunchAgent that starts this same daemon at login; it contains only local runtime, project, port, persistence, the setup-resolved absolute Codex CLI path, and a process-local minimal `PATH` for that CLI and its resolved Node runtime. It never stores an OpenRouter Key or Profile value, and does not change the user's global shell environment. The daemon has no idle provider polling, account refresh, external dispatch, or RSS sampling unless a run is active.
 
 The daemon remains bound to one project root. Setup may replace a verified idle temporary daemon to establish the fixed entry, but it defers while a run is active and blocks on unknown state; after a verified idle stop it uses the same reusable-address semantics as the `aiohttp` listener before rebinding the fixed loopback port. It never silently switches the persisted entry to another project. Windows and Linux use the same fixed persistent daemon for the current login session, while a platform-native login entry is not claimed until it is implemented and accepted.
+
+## D032 — Pin a run-scoped permission profile above project configuration
+
+Status: Accepted
+
+Reason:
+
+`allow_login_shell=false` alone does not stop a normal shell command from sourcing the real user's startup files, and lower-priority `shell_environment_policy` values can be replaced by a trusted project config. The provider process still needs the OpenRouter Key, while worker tool processes must not inherit or recover it. Codex 0.149 permission profiles provide the narrow supported boundary; explicit legacy `--sandbox` is not combined with that profile.
+
+Alternatives considered:
+
+Keeping only the login-shell flag, enumerating the user's HOME into model-visible permission rules, denying the entire HOME while linked-worktree Git still needs its common directory, and using the global sandbox bypass were not accepted. A `:minimal` read profile was also rejected for this harness because it blocks ordinary platform toolchains such as macOS Command Line Tools.
+
+Consequences:
+
+Each external run sets `default_permissions="aiworker"`, uses an isolated HOME / TMP / XDG environment with `inherit="none"`, disables tool network, denies `/proc` and `/run/user`, real HOME hidden configuration and platform credential paths, and the source checkout's `.env*`, `.codex` and index. The worktree is forced to `trust_level="untrusted"`; `allow_login_shell`, shell inheritance/default excludes/profile loading, the OpenRouter Key filter and any fixed reasoning choice are repeated as CLI overrides. `AGENTS.md` remains available from the worktree. `--approve-for-me` remains the non-interactive approval mechanism, without an explicit legacy `--sandbox` or global bypass.
+
+Projects below a hidden HOME directory or a protected credential directory fail closed instead of silently weakening these rules. The profile is a secret/config boundary, not a claim that every arbitrary main-checkout file or object in the linked Git object database is confidential; upgrading that contract requires a separate product decision.

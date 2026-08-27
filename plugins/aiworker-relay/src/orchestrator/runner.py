@@ -18,6 +18,62 @@ class ProcessControlError(RuntimeError):
     """A process lifecycle operation is invalid or could not be observed."""
 
 
+def _sensitive_host_paths(
+    host_home: Path, project_root: Path, source_checkout_index: Path
+) -> tuple[Path, ...]:
+    """Return stable secret paths that worker tools must never read."""
+
+    host_home = host_home.resolve()
+    project_root = project_root.resolve()
+    try:
+        project_relative = project_root.relative_to(host_home)
+    except ValueError:
+        project_relative = None
+    if project_relative is not None and (
+        not project_relative.parts or project_relative.parts[0].startswith(".")
+    ):
+        raise ProcessControlError(
+            "external runs do not support projects below a hidden home path"
+        )
+
+    protected_directories = (
+        host_home / "Library" / "Keychains",
+        host_home / "Library" / "Application Support" / "Codex External Workers",
+        host_home / "AppData",
+        host_home / "Documents" / "PowerShell",
+        host_home / "Documents" / "WindowsPowerShell",
+    )
+    for protected in protected_directories:
+        try:
+            project_root.relative_to(protected)
+        except ValueError:
+            continue
+        raise ProcessControlError(
+            f"external runs do not support projects below {protected}"
+        )
+
+    return (
+        Path("/proc"),
+        Path("/run/user"),
+        host_home / ".*",
+        *protected_directories,
+        project_root / ".env*",
+        project_root / ".codex",
+        source_checkout_index.resolve(),
+    )
+
+
+def _validate_run_roots(worktree: Path, git_common_dir: Path) -> None:
+    if not worktree.is_dir():
+        raise ProcessControlError(
+            f"external run worktree is unavailable: {worktree}"
+        )
+    if not git_common_dir.is_dir():
+        raise ProcessControlError(
+            f"external run Git metadata is unavailable: {git_common_dir}"
+        )
+
+
 def _error_message(value: object) -> str | None:
     """Keep the provider's human message, not its opaque event payload."""
 
@@ -279,7 +335,10 @@ async def start_process(
 
 async def start_codex_run(
     *,
+    project_root: Path,
     worktree: Path,
+    git_common_dir: Path,
+    source_checkout_index: Path,
     run_dir: Path,
     prompt: str,
     model: str,
@@ -291,12 +350,43 @@ async def start_codex_run(
 ) -> ManagedProcess:
     """Start the only accepted v0.1 harness: isolated ``codex exec``."""
 
+    project_root = project_root.resolve()
+    worktree = worktree.resolve()
+    git_common_dir = git_common_dir.resolve()
+    source_checkout_index = source_checkout_index.resolve()
+    run_dir = run_dir.resolve()
+    code_home = code_home.resolve()
+    host_home = Path.home().resolve()
+    isolated_home = run_dir / "HOME"
+    isolated_tmp = isolated_home / "tmp"
     code_home.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
+    isolated_tmp.mkdir(parents=True, exist_ok=True)
+    _validate_run_roots(worktree, git_common_dir)
+
+    # The provider process still needs the host PATH and its OpenRouter Key,
+    # but every tool process receives only this run-scoped environment.
+    tool_environment = {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(isolated_home),
+        "USERPROFILE": str(isolated_home),
+        "TMPDIR": str(isolated_tmp),
+        "TMP": str(isolated_tmp),
+        "TEMP": str(isolated_tmp),
+        "XDG_CONFIG_HOME": str(isolated_home / ".config"),
+        "XDG_CACHE_HOME": str(isolated_home / ".cache"),
+        "XDG_DATA_HOME": str(isolated_home / ".local" / "share"),
+        "APPDATA": str(isolated_home / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(isolated_home / "AppData" / "Local"),
+    }
+    sensitive_home_paths = _sensitive_host_paths(
+        host_home, project_root, source_checkout_index
+    )
     # Keep provider and model selection inside this run's CODEX_HOME.  The
     # parent Codex config and its hooks are never copied into this directory.
     config_lines = [
         "allow_login_shell = false",
+        'default_permissions = "aiworker"',
         'model_provider = "openrouter"',
         f"model = {json.dumps(model)}",
     ]
@@ -305,9 +395,32 @@ async def start_codex_run(
     config_lines.extend(
         [
             "",
+            "[permissions.aiworker]",
+            'description = "AIworker isolated write run"',
+            'extends = ":workspace"',
+            "",
+            "[permissions.aiworker.workspace_roots]",
+            f"{json.dumps(str(isolated_home))} = true",
+            "",
+            "[permissions.aiworker.filesystem]",
+            *(
+                f'{json.dumps(str(path))} = "deny"'
+                for path in sensitive_home_paths
+            ),
+            "",
+            "[permissions.aiworker.network]",
+            "enabled = false",
+            "",
             "[shell_environment_policy]",
-            'inherit = "core"',
+            'inherit = "none"',
             "ignore_default_excludes = false",
+            "experimental_use_profile = false",
+            "",
+            "[shell_environment_policy.set]",
+            *(
+                f"{key} = {json.dumps(value)}"
+                for key, value in tool_environment.items()
+            ),
             "",
             "[shell_environment_policy.filters]",
             '"OPENROUTER_API_KEY" = "exclude"',
@@ -322,28 +435,46 @@ async def start_codex_run(
     )
     (code_home / "config.toml").write_text("\n".join(config_lines), encoding="utf-8")
     output_path = run_dir / "last-message.md"
-    command = [
-        executable,
-        "exec",
-        "--json",
-        "--ephemeral",
-        "-c",
+    overrides = [
         "allow_login_shell=false",
-        "--sandbox",
-        "workspace-write",
-        # External runs cannot answer a terminal approval prompt. Keep their
-        # automatic approval within Codex's supported workspace-write mode.
-        "--approve-for-me",
-        "--model",
-        model,
-        "--output-last-message",
-        str(output_path),
-        "--cd",
-        str(worktree),
-        prompt,
+        'default_permissions="aiworker"',
+        f"projects.{json.dumps(str(worktree))}.trust_level=\"untrusted\"",
+        'shell_environment_policy.inherit="none"',
+        "shell_environment_policy.ignore_default_excludes=false",
+        "shell_environment_policy.experimental_use_profile=false",
+        'shell_environment_policy.filters.OPENROUTER_API_KEY="exclude"',
     ]
+    if reasoning_effort and reasoning_effort != "auto":
+        overrides.append(
+            f"model_reasoning_effort={json.dumps(reasoning_effort)}"
+        )
+    overrides.extend(
+        f"shell_environment_policy.set.{key}={json.dumps(value)}"
+        for key, value in tool_environment.items()
+    )
+
+    command = [executable, "exec", "--json", "--ephemeral", "--strict-config"]
+    for override in overrides:
+        command.extend(["-c", override])
+    command.extend(
+        [
+            # External runs cannot answer a terminal approval prompt. Keep
+            # automatic approval inside the selected least-privilege profile.
+            "--approve-for-me",
+            "--model",
+            model,
+            "--output-last-message",
+            str(output_path),
+            "--cd",
+            str(worktree),
+            prompt,
+        ]
+    )
     environment = os.environ.copy()
     environment["CODEX_HOME"] = str(code_home)
+    environment.update(tool_environment)
+    environment.pop("HOMEDRIVE", None)
+    environment.pop("HOMEPATH", None)
     # The provider process needs the Key, while shell_environment_policy keeps
     # it and other ambient secrets out of commands spawned by the worker.
     environment["OPENROUTER_API_KEY"] = api_key

@@ -615,13 +615,26 @@ class DaemonState:
         evidence.write_task_packet(packet.prompt())
         await self.broadcast("run.created", run=self._record_payload(record))
         task = asyncio.create_task(
-            self._execute_run(record, packet, api_key, worktree.path)
+            self._execute_run(
+                record,
+                packet,
+                api_key,
+                worktree.path,
+                worktree.git_common_dir,
+                worktree.source_checkout_index,
+            )
         )
         self._tasks[run_id] = task
         return record
 
     async def _execute_run(
-        self, record: RunRecord, packet: TaskPacket, api_key: str, worktree: Path
+        self,
+        record: RunRecord,
+        packet: TaskPacket,
+        api_key: str,
+        worktree: Path,
+        git_common_dir: Path,
+        source_checkout_index: Path,
     ) -> None:
         evidence = self._evidence[record.run_id]
         record.status = "starting"
@@ -646,7 +659,10 @@ class DaemonState:
 
         try:
             process = await start_codex_run(
+                project_root=Path(record.project_root),
                 worktree=worktree,
+                git_common_dir=git_common_dir,
+                source_checkout_index=source_checkout_index,
                 run_dir=self.runs_root / record.run_id,
                 prompt=packet.prompt(),
                 model=record.model,

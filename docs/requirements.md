@@ -47,7 +47,7 @@
 - 公开 pre-release 源码仓库是 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。仓库公开不等于任意新 bundle 已自动到达用户本机；用户获得新 bundle 后仍须显式运行 `$aiworker-relay setup`。
 - `$aiworker-relay setup` 使用 Python 3.12+ 在用户应用数据目录创建并复用专用 `venv`；明确的 setup 请求授权这一次本机安装，缺失依赖时不再要求第二次对话确认，不依赖或改写全局 Python 包。泛泛的配置请求不得自动 bootstrap。用户应用数据目录分别为 macOS `~/Library/Application Support/Codex External Workers`、Windows `%LOCALAPPDATA%\\Codex External Workers`、Linux `$XDG_DATA_HOME/codex-external-workers`（默认 `~/.local/share/codex-external-workers`）。
 - `external-workersd` 只绑定 loopback `127.0.0.1`；`orch setup` 与 `orch dispatch --profile <id> --packet <path>` 是由 Skill 调用的真实本机入口。
-- 首发外部 harness 只有隔离的 `codex exec --json --ephemeral --approve-for-me --output-last-message`；自动审批保持在 Codex 的 workspace-write 模式，不使用危险的 approvals/sandbox bypass，也不建设备用 CLI 或模型 SDK 路径。
+- 首发外部 harness 只有隔离的 `codex exec --json --ephemeral --strict-config --approve-for-me --output-last-message`。每个 run 使用独立 `CODEX_HOME`、隔离 HOME 与 `aiworker` permission profile；工具网络关闭，真实 HOME 隐藏配置、系统凭据路径、主 checkout `.env*` / `.codex` 和 source index 禁读。项目配置按 untrusted 处理，安全 shell-policy 与用户明确选择的 reasoning 由 CLI 固定。不得同时传旧 `--sandbox`，不得使用危险的 approvals/sandbox bypass，也不建设备用 CLI 或模型 SDK 路径。
 - 外部 write run 必须从项目 `HEAD` 创建 detached Git worktree，位于 `.orch/worktrees/<run-id>`；不自动 commit、merge 或同步主工作区的未提交改动。
 - Task Packet 使用 v1 固定字段表达目标、范围、禁止修改项、已知事实、约束、验收、验证、Profile、推理档位、选择来源、数据边界与 workspace。模型最终文字与 daemon 采集的 lifecycle、diff、退出状态共同构成 Result Evidence，不依赖 JSON Schema enforcement。
 - Profile 同时保存 `enabled` / `frozen` 和 `unverified` / `verified`。未验证 Profile 不得被 Codex 建议；只有用户显式选择并确认实验性运行时允许派发。
@@ -103,6 +103,7 @@
 - 本地 UI 与 Codex CLI 分别负责哪些操作入口；Codex Desktop 能否提供原生入口仍待验证。
 - macOS、Windows 和 Linux 的最低支持版本、密钥服务前置条件与进程终止验收矩阵是什么？
 - 多项目同时需要外部 worker 时，应复用一个真正的多项目控制面，还是要求显式切换？当前实现选择安全拒绝，尚未决定产品体验。
+- dirty workspace 当前合同是“不复制到 detached worktree”，不是“主 checkout 的任意内容均不可读取”。linked worktree 仍共享 Git object database，Codex `:workspace` 也保留根文件系统读取；当前 profile 阻断已确认的 HOME、凭据、主 checkout `.env*` / `.codex` 与 source index，但不会宣称任意命名的 dirty 文件或 dangling Git object 都构成机密隔离。若产品要升级到该合同，需要独立 object store/clone 与工具链读取边界的产品决定。
 - Codex 中“明确指定 Worker”的最终引导文案是什么，是否需要提供可复制示例？
 - 普通 Key 与 management Key 是否继续使用同一个设置字段，还是需要第二个可选入口？
 - 移动端是完整支持目标，还是只保证桌面浏览器的可用窄屏布局？

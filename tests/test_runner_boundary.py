@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import tomllib
@@ -9,11 +10,47 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from orchestrator.runner import start_codex_run
+from orchestrator.runner import (
+    ProcessControlError,
+    _sensitive_host_paths,
+    start_codex_run,
+)
 
 
 class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_external_run_sets_explicit_sandbox_and_filters_secrets(self) -> None:
+    def test_sensitive_paths_cover_home_project_and_source_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            host_home = Path(temporary) / "home"
+            project_root = host_home / "Documents" / "projects" / "relay"
+            source_index = project_root / ".git" / "index"
+            source_index.parent.mkdir(parents=True)
+            host_home = host_home.resolve()
+            project_root = project_root.resolve()
+            source_index = source_index.resolve()
+
+            denials = set(
+                _sensitive_host_paths(
+                    host_home, project_root, source_index
+                )
+            )
+
+            self.assertIn(host_home / ".*", denials)
+            self.assertIn(Path("/proc"), denials)
+            self.assertIn(Path("/run/user"), denials)
+            self.assertIn(host_home / "Library" / "Keychains", denials)
+            self.assertIn(host_home / "AppData", denials)
+            self.assertIn(project_root / ".env*", denials)
+            self.assertIn(project_root / ".codex", denials)
+            self.assertIn(source_index, denials)
+
+            with self.assertRaises(ProcessControlError):
+                _sensitive_host_paths(
+                    host_home,
+                    host_home / ".hidden-project",
+                    source_index,
+                )
+
+    async def test_external_run_sets_permission_profile_and_filters_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             worktree = root / "worktree"
@@ -32,7 +69,10 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 ) as start,
             ):
                 await start_codex_run(
+                    project_root=root,
                     worktree=worktree,
+                    git_common_dir=root,
+                    source_checkout_index=root / "source.index",
                     run_dir=run_dir,
                     prompt="Create one bounded file.",
                     model="provider/model",
@@ -45,24 +85,72 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         command = list(start.await_args.args[0])
-        sandbox_index = command.index("--sandbox")
-        self.assertEqual(command[sandbox_index + 1], "workspace-write")
+        overrides = [
+            command[index + 1]
+            for index, value in enumerate(command)
+            if value == "-c"
+        ]
+        self.assertNotIn("--sandbox", command)
+        self.assertIn("--strict-config", command)
         self.assertIn("--approve-for-me", command)
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
-        self.assertEqual(command[command.index("-c") + 1], "allow_login_shell=false")
+        self.assertIn("allow_login_shell=false", overrides)
+        self.assertIn('default_permissions="aiworker"', overrides)
+        self.assertIn(
+            f'projects.{json.dumps(str(worktree.resolve()))}.trust_level="untrusted"',
+            overrides,
+        )
+        self.assertIn('shell_environment_policy.inherit="none"', overrides)
+        self.assertIn(
+            "shell_environment_policy.ignore_default_excludes=false", overrides
+        )
+        self.assertIn(
+            "shell_environment_policy.experimental_use_profile=false", overrides
+        )
+        self.assertIn(
+            'shell_environment_policy.filters.OPENROUTER_API_KEY="exclude"',
+            overrides,
+        )
+        self.assertIn('model_reasoning_effort="high"', overrides)
         self.assertEqual(command[command.index("--model") + 1], "provider/model")
 
         environment = start.await_args.kwargs["env"]
         self.assertEqual(environment["OPENROUTER_API_KEY"], "openrouter-secret")
         self.assertEqual(environment["UNRELATED_SERVICE_TOKEN"], "ambient-secret")
+        isolated_home = run_dir.resolve() / "HOME"
+        self.assertEqual(environment["HOME"], str(isolated_home))
+        self.assertEqual(environment["USERPROFILE"], str(isolated_home))
 
         config = tomllib.loads(config_text)
         self.assertFalse(config["allow_login_shell"])
+        self.assertEqual(config["default_permissions"], "aiworker")
         self.assertEqual(config["model"], "provider/model")
         self.assertEqual(config["model_reasoning_effort"], "high")
+        permissions = config["permissions"]["aiworker"]
+        self.assertEqual(permissions["extends"], ":workspace")
+        self.assertTrue(permissions["workspace_roots"][str(isolated_home)])
+        self.assertFalse(permissions["network"]["enabled"])
+        self.assertEqual(
+            permissions["filesystem"][str(Path.home().resolve() / ".*")],
+            "deny",
+        )
+        self.assertEqual(
+            permissions["filesystem"][str(root.resolve() / ".env*")],
+            "deny",
+        )
+        self.assertEqual(
+            permissions["filesystem"][str(root.resolve() / ".codex")],
+            "deny",
+        )
+        self.assertEqual(
+            permissions["filesystem"][str(root.resolve() / "source.index")],
+            "deny",
+        )
         policy = config["shell_environment_policy"]
-        self.assertEqual(policy["inherit"], "core")
+        self.assertEqual(policy["inherit"], "none")
         self.assertFalse(policy["ignore_default_excludes"])
+        self.assertFalse(policy["experimental_use_profile"])
+        self.assertEqual(policy["set"]["HOME"], str(isolated_home))
         self.assertEqual(policy["filters"]["OPENROUTER_API_KEY"], "exclude")
         self.assertEqual(
             config["model_providers"]["openrouter"]["env_key"],
