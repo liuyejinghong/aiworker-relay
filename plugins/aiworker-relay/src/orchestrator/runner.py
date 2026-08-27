@@ -509,6 +509,13 @@ async def start_codex_run(
     config_lines.extend(
         [
             "",
+            "[shell_environment_policy]",
+            'inherit = "core"',
+            "ignore_default_excludes = false",
+            "",
+            "[shell_environment_policy.filters]",
+            '"OPENROUTER_API_KEY" = "exclude"',
+            "",
             "[model_providers.openrouter]",
             'name = "OpenRouter"',
             'base_url = "https://openrouter.ai/api/v1"',
@@ -524,6 +531,8 @@ async def start_codex_run(
         "exec",
         "--json",
         "--ephemeral",
+        "--sandbox",
+        "workspace-write",
         # External runs cannot answer a terminal approval prompt. Keep their
         # automatic approval within Codex's supported workspace-write mode.
         "--approve-for-me",
@@ -537,7 +546,8 @@ async def start_codex_run(
     ]
     environment = os.environ.copy()
     environment["CODEX_HOME"] = str(code_home)
-    # The key is only in the child environment; it is never part of a record.
+    # The provider process needs the Key, while shell_environment_policy keeps
+    # it and other ambient secrets out of commands spawned by the worker.
     environment["OPENROUTER_API_KEY"] = api_key
     return await start_process(
         command,
