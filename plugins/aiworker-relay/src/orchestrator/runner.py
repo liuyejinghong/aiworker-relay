@@ -113,6 +113,12 @@ class ManagedProcess:
             os.killpg(self.process_group, 0)
         except ProcessLookupError:
             return False
+        except PermissionError:
+            # On macOS a process group containing only a freshly killed,
+            # unreaped child can transiently return EPERM for signal 0.  The
+            # group still exists; keep polling instead of permanently losing
+            # the identity of an already-owned group.
+            return True
         except OSError as exc:
             if exc.errno == errno.ESRCH:
                 return False

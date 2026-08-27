@@ -205,6 +205,10 @@ def _process_group_state(record: RunRecord) -> tuple[bool, str | None]:
         os.killpg(record.process_group, 0)
     except ProcessLookupError:
         return False, "process_not_found"
+    except PermissionError:
+        # A just-killed POSIX group may remain as an unreaped zombie and report
+        # EPERM for signal 0.  It still exists, so recovery must keep waiting.
+        return True, None
     except OSError as exc:
         if exc.errno == errno.ESRCH:
             return False, "process_not_found"

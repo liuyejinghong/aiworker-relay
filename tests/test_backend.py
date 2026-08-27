@@ -443,6 +443,26 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
             [(7000, signal.SIGTERM), (7000, signal.SIGKILL)],
         )
 
+    async def test_posix_wait_treats_transient_group_eperm_as_still_existing(self) -> None:
+        class RootProcess:
+            pid = 4242
+            returncode = 0
+            stdout = None
+            stderr = None
+
+            async def wait(self) -> int:
+                return 0
+
+        with (
+            patch("orchestrator.runner.os.getpgid", return_value=7000),
+            patch(
+                "orchestrator.runner.os.killpg",
+                side_effect=[PermissionError(1, "not permitted"), ProcessLookupError()],
+            ),
+        ):
+            managed = ManagedProcess(RootProcess())
+            self.assertEqual(await managed.wait(), 0)
+
     async def test_windows_wait_tracks_known_child_and_surfaces_identity_error(self) -> None:
         class RootProcess:
             pid = 4242

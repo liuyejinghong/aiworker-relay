@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from orchestrator.daemon import (
     APIError,
     DaemonState,
+    _process_group_state,
     _process_start_value,
     _serve_until_clean_shutdown,
 )
@@ -637,6 +638,16 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(record.status, "incomplete")
             self.assertEqual(record.stop_outcome, "recovery_term_exited")
             self.assertEqual(state.active_run_ids(), ())
+
+    def test_recovery_treats_group_eperm_as_still_existing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, record = self._state_and_record(Path(temporary), status="running")
+            record.process_group = 4242
+            with patch(
+                "orchestrator.daemon.os.killpg",
+                side_effect=PermissionError(1, "not permitted"),
+            ):
+                self.assertEqual(_process_group_state(record), (True, None))
 
     async def test_restart_pid_mismatch_never_signals_and_frees_active_record(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
