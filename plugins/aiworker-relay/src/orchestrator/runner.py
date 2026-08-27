@@ -296,6 +296,7 @@ async def start_codex_run(
     # Keep provider and model selection inside this run's CODEX_HOME.  The
     # parent Codex config and its hooks are never copied into this directory.
     config_lines = [
+        "allow_login_shell = false",
         'model_provider = "openrouter"',
         f"model = {json.dumps(model)}",
     ]
@@ -326,6 +327,8 @@ async def start_codex_run(
         "exec",
         "--json",
         "--ephemeral",
+        "-c",
+        "allow_login_shell=false",
         "--sandbox",
         "workspace-write",
         # External runs cannot answer a terminal approval prompt. Keep their
