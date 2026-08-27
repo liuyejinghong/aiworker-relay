@@ -31,7 +31,7 @@
 | 层 | 组成 | 负责什么 | 不负责什么 |
 | --- | --- | --- | --- |
 | Plugin 与 Skill | AIworker Relay Plugin、`aiworker-relay` Skill、随包的本地资源 | 向 Codex 分发能力、提供 setup 与受控派发入口 | 不全局接管 Codex，也不替代运行控制面 |
-| 开发者与项目 | 开发者、Codex 对话、项目工作区 | 提出目标、明确指定模型或推理档位、查看和停止外部 run | 不直接管理模型 provider 或子进程细节 |
+| 开发者与项目 | 开发者、Codex 对话、项目工作区 | 提出目标、明确选择带默认推理策略的 Profile、查看和停止外部 run | 不直接管理模型 provider 或子进程细节 |
 | Codex 控制层 | Codex / Sol、Task Packet、最终验收 | 判断任务是否适合派生、约束 scope、建议 worker、验收证据 | 不把外部模型升格为第二个决策者 |
 | 本地运行控制面 | 单个持久 `external-workersd`、本地 Web、profile 配置、external supervisor、`.orch/` | 保存本机配置、发现模型、冻结 profile、监管外部进程和展示真实状态 | 不伪造原生子代理的 PID、RSS 或费用 |
 | 外部执行面 | 隔离的 Codex CLI、OpenRouter、选定模型 | 在限定 packet 内完成劳动并返回结果和证据 | 不持有主 Codex 的完整上下文、hook 或最终验收权 |

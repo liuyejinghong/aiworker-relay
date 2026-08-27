@@ -22,7 +22,7 @@ Developer
   → Codex review
 ```
 
-The developer's explicit model and reasoning choice always wins. A Codex recommendation is never dispatch authority by itself.
+The developer's explicit Profile choice always wins. In v0.1, each run uses that Profile's configured reasoning policy; run-level reasoning overrides are rejected. A Codex recommendation is never dispatch authority by itself.
 
 ## What is implemented today
 
