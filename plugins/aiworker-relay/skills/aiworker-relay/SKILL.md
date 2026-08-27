@@ -34,7 +34,7 @@ Before dispatching, keep the work bounded and write a Task Packet Markdown file 
 ```
 
 - The user must explicitly select the Profile, or explicitly accept Codex's recommendation, before any external run that may send context or incur use.
-- Preserve the user's explicit reasoning choice. Otherwise use the Profile's configured default; only a Profile configured for automatic reasoning permits Codex to choose it.
+- Use the selected Profile's configured reasoning policy. v0.1 has no per-run reasoning override; a fixed Profile passes its default unchanged, while only an automatic Profile leaves the effort for Codex to choose.
 - Invoke `python3 <plugin-root>/scripts/launch_external_workers.py dispatch --profile <profile-id> --packet <packet-path>` only after those conditions are true.
 - For an unverified Profile, require the user's explicit experimental-run confirmation and add `--confirm-experimental`.
 - A frozen Profile is a refusal, not a reason to silently choose another model. Report the frozen state and wait for the user to activate a Profile or choose another one.

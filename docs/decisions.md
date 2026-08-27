@@ -176,7 +176,7 @@ Always defaulting every model to maximum effort, allowing Codex to silently lowe
 
 Consequences:
 
-The user selects a profile default only from the discovered model's supported efforts, or explicitly selects an automatic policy. Fixed defaults are passed through unchanged unless a task explicitly overrides them. Each run records its actual effort for later cost-performance comparison.
+The user selects a profile default only from the discovered model's supported efforts, or explicitly selects an automatic policy. In v0.1, fixed defaults are passed through unchanged and tasks cannot override them; an automatic Profile leaves the effort unset for Codex to choose. Each run records the configured effort and whether it came from a fixed or automatic Profile. D032 supersedes the earlier per-run override idea.
 
 ## D012 — Distribute the capability as a Codex Plugin with a core Skill
 
@@ -505,3 +505,17 @@ Consequences:
 The existing `external-workersd` gains a persistent mode and serves the fixed loopback address `127.0.0.1:49178`. On macOS, explicit setup writes one user-owned `com.aiworker.relay` LaunchAgent that starts this same daemon at login; it contains only local runtime, project, port, persistence, the setup-resolved absolute Codex CLI path, and a process-local minimal `PATH` for that CLI and its resolved Node runtime. It never stores an OpenRouter Key or Profile value, and does not change the user's global shell environment. The daemon has no idle provider polling, account refresh, external dispatch, or RSS sampling unless a run is active.
 
 The daemon remains bound to one project root. Setup may replace a verified idle temporary daemon to establish the fixed entry, but it defers while a run is active and blocks on unknown state; after a verified idle stop it uses the same reusable-address semantics as the `aiohttp` listener before rebinding the fixed loopback port. It never silently switches the persisted entry to another project. Windows and Linux use the same fixed persistent daemon for the current login session, while a platform-native login entry is not claimed until it is implemented and accepted.
+
+## D032 — Use the Profile default as the only v0.1 reasoning value
+
+Status:
+
+Accepted
+
+Reason:
+
+The v0.1 CLI and UI do not expose per-run reasoning selection. Accepting an override in the API would create an unsupported path and make the persisted run value ambiguous.
+
+Consequences:
+
+`POST /api/runs` and `DaemonState.create_run` reject any payload containing the `reasoning_effort` key, including `null` and an empty string, with `reasoning_override_not_supported` before packet loading or worktree creation. Normal runs use `Profile.default_reasoning`; `TaskPacket` and `RunRecord` persist the separate source as `profile_default` or `profile_auto`. Dispatch does not refresh the catalog in v0.1: it uses the Profile value validated and stored when the Profile was created, so provider catalog availability cannot silently change a run setting. Existing records without the source field remain readable.

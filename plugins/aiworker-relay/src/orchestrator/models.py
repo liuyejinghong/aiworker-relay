@@ -88,6 +88,7 @@ class TaskPacket:
     profile_id: str | None = None
     profile_model: str | None = None
     reasoning_effort: str | None = None
+    reasoning_source: str | None = None
     selection_source: str | None = None
     workspace: dict[str, Any] = field(default_factory=dict)
 
@@ -98,6 +99,7 @@ class TaskPacket:
             "profile_id": self.profile_id,
             "profile_model": self.profile_model,
             "reasoning_effort": self.reasoning_effort,
+            "reasoning_source": self.reasoning_source,
             "selection_source": self.selection_source,
             "workspace": dict(self.workspace),
         }
@@ -115,6 +117,8 @@ class TaskPacket:
             metadata.append(f"- model: {self.profile_model}")
         if self.reasoning_effort:
             metadata.append(f"- reasoning_effort: {self.reasoning_effort}")
+        if self.reasoning_source:
+            metadata.append(f"- reasoning_source: {self.reasoning_source}")
         if self.selection_source:
             metadata.append(f"- selection_source: {self.selection_source}")
         if self.workspace:
@@ -154,6 +158,7 @@ class RunRecord:
     updated_at: str
     project_root: str
     reasoning_effort: str | None = None
+    reasoning_source: str | None = None
     worktree: str | None = None
     pid: int | None = None
     process_group: int | None = None

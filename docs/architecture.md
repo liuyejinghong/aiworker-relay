@@ -31,7 +31,7 @@
 | 层 | 组成 | 负责什么 | 不负责什么 |
 | --- | --- | --- | --- |
 | Plugin 与 Skill | AIworker Relay Plugin、`aiworker-relay` Skill、随包的本地资源 | 向 Codex 分发能力、提供 setup 与受控派发入口 | 不全局接管 Codex，也不替代运行控制面 |
-| 开发者与项目 | 开发者、Codex 对话、项目工作区 | 提出目标、明确指定模型或推理档位、查看和停止外部 run | 不直接管理模型 provider 或子进程细节 |
+| 开发者与项目 | 开发者、Codex 对话、项目工作区 | 提出目标、明确选择带默认推理策略的 Profile、查看和停止外部 run | 不直接管理模型 provider 或子进程细节 |
 | Codex 控制层 | Codex / Sol、Task Packet、最终验收 | 判断任务是否适合派生、约束 scope、建议 worker、验收证据 | 不把外部模型升格为第二个决策者 |
 | 本地运行控制面 | 单个持久 `external-workersd`、本地 Web、profile 配置、external supervisor、`.orch/` | 保存本机配置、发现模型、冻结 profile、监管外部进程和展示真实状态 | 不伪造原生子代理的 PID、RSS 或费用 |
 | 外部执行面 | 隔离的 Codex CLI、OpenRouter、选定模型 | 在限定 packet 内完成劳动并返回结果和证据 | 不持有主 Codex 的完整上下文、hook 或最终验收权 |
@@ -157,7 +157,7 @@ profile 与 run 必须分开。冻结 profile 只阻止新的 run；停止正在
 
 首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录，并使用 `--approve-for-me` 让非交互式 CLI 在 Codex 的 workspace-write 审批模式下执行工具。它不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。这个限制避免在首版实现 patch 同步和冲突处理层。
 
-固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。用户在 task 中明确指定档位时优先；只有 profile 被设为“自动”时，Codex 才能为该 run 选择模型实际支持的档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
+固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。v0.1 不接受 task 级档位覆盖；固定 Profile 原样使用其默认档位，只有 Profile 被设为“自动”时才不固定该 run 的具体档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
 
 ## 状态与停止语义
 

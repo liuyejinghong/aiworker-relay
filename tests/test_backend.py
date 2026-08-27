@@ -29,7 +29,7 @@ from orchestrator.daemon import (
     fetch_openrouter_benchmarks,
     validate_openrouter_key,
 )
-from orchestrator.models import Profile, RunRecord, utc_now
+from orchestrator.models import Profile, RunRecord, TaskPacket, utc_now
 from orchestrator.runner import start_codex_run, start_process
 from orchestrator.tasks import PacketValidationError, parse_packet
 from orchestrator.worktree import create_worktree
@@ -298,6 +298,103 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_rejects_reasoning_override_before_packet_or_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: "test-key",
+            )
+            state.profiles.put(Profile("p", "provider/model"))
+            for override in ("high", None, ""):
+                with (
+                    patch("orchestrator.daemon.load_packet") as load,
+                    patch("orchestrator.daemon.create_worktree") as worktree,
+                    self.assertRaises(APIError) as context,
+                ):
+                    await state.create_run(
+                        {
+                            "profile_id": "p",
+                            "packet_path": str(root / "packet.md"),
+                            "consent": True,
+                            "selection_source": "user",
+                            "experimental_confirmation": True,
+                            "reasoning_effort": override,
+                        }
+                    )
+                self.assertEqual(
+                    context.exception.code, "reasoning_override_not_supported"
+                )
+                load.assert_not_called()
+                worktree.assert_not_called()
+            self.assertEqual(state.records, {})
+            self.assertEqual(state._evidence, {})
+            self.assertEqual(list(state.runs_root.iterdir()), [])
+            self.assertFalse((state.runtime_root / "worktrees").exists())
+
+    async def test_run_persists_profile_reasoning_value_and_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            worktree = MagicMock(
+                path=root / "worktree", dirty_workspace_excluded=False
+            )
+            worktree.source_head = "HEAD"
+            packets: dict[str, TaskPacket] = {}
+
+            def make_packet(_path: Path, **kwargs: str | None) -> TaskPacket:
+                packet = TaskPacket(fields={}, raw="# Task Packet\n", **kwargs)
+                packets[packet.run_id] = packet
+                return packet
+
+            for default, expected_source in (
+                ("high", "profile_default"),
+                ("auto", "profile_auto"),
+            ):
+                catalog_fetcher = MagicMock(return_value=[])
+                state = DaemonState(
+                    data_dir=root / f"app-{default}",
+                    project_root=root,
+                    catalog_fetcher=catalog_fetcher,
+                    key_getter=lambda: "test-key",
+                )
+                state.profiles.put(
+                    Profile(
+                        "p",
+                        "provider/model",
+                        default_reasoning=default,
+                    )
+                )
+                execute_run = MagicMock()
+                with (
+                    patch(
+                        "orchestrator.daemon.load_packet", side_effect=make_packet
+                    ) as load,
+                    patch("orchestrator.daemon.create_worktree", return_value=worktree),
+                    patch("orchestrator.daemon.asyncio.create_task"),
+                    patch.object(state, "_execute_run", execute_run),
+                ):
+                    record = await state.create_run(
+                        {
+                            "profile_id": "p",
+                            "packet_path": "unused",
+                            "consent": True,
+                            "selection_source": "user",
+                            "experimental_confirmation": True,
+                        }
+                    )
+                self.assertEqual(record.reasoning_effort, default)
+                self.assertEqual(record.reasoning_source, expected_source)
+                self.assertEqual(load.call_args.kwargs["reasoning_effort"], default)
+                self.assertEqual(
+                    load.call_args.kwargs["reasoning_source"], expected_source
+                )
+                packet = packets[record.run_id]
+                self.assertEqual(packet.reasoning_effort, default)
+                self.assertEqual(packet.reasoning_source, expected_source)
+                catalog_fetcher.assert_not_called()
+
     async def test_profile_fixed_reasoning_is_limited_to_catalog_options(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state = DaemonState(

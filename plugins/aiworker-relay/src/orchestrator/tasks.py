@@ -65,6 +65,7 @@ def parse_packet(
     profile_id: str | None = None,
     profile_model: str | None = None,
     reasoning_effort: str | None = None,
+    reasoning_source: str | None = None,
     selection_source: str | None = None,
 ) -> TaskPacket:
     """Parse and validate a Task Packet without imposing a JSON schema."""
@@ -90,6 +91,7 @@ def parse_packet(
         profile_id=profile_id,
         profile_model=profile_model,
         reasoning_effort=reasoning_effort,
+        reasoning_source=reasoning_source,
         selection_source=selection_source,
     )
 
@@ -101,6 +103,7 @@ def load_packet(
     profile_id: str | None = None,
     profile_model: str | None = None,
     reasoning_effort: str | None = None,
+    reasoning_source: str | None = None,
     selection_source: str | None = None,
 ) -> TaskPacket:
     try:
@@ -113,5 +116,6 @@ def load_packet(
         profile_id=profile_id,
         profile_model=profile_model,
         reasoning_effort=reasoning_effort,
+        reasoning_source=reasoning_source,
         selection_source=selection_source,
     )
