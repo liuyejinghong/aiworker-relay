@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.16 已实现并在用户应用数据中完成受控 runtime 收敛和持久本机入口验收。macOS LaunchAgent 为其自身提供解析 Codex CLI/Node 所需的最小 `PATH`；空闲 daemon 的受控停启已在同一固定地址完成真实回读。Git-backed Marketplace 的干净 CLI 安装与已安装 bundle 更新已完成真实验收；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
+状态：v0.1.16 已实现并在用户应用数据中完成受控 runtime 收敛和持久本机入口验收。macOS LaunchAgent 为其自身提供解析 Codex CLI/Node 所需的最小 `PATH`；空闲 daemon 的受控停启已在同一固定地址完成真实回读。2026-08-27 的全新隔离 `CODEX_HOME` 已从公开 Git Marketplace 安装 `0.1.16`，其 launcher `setup --no-open` 与当前同项目的空闲本机控制面收敛。未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
 
 ## 为什么需要这一项
 
@@ -131,7 +131,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 1. 用户在 Codex 中刷新 marketplace 并接受可用的 Plugin 更新；
 2. 用户下次需要本地控制面时执行 `$aiworker-relay setup`，它完成应用级 runtime 收敛。
 
-公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。2026-08-26 的干净隔离验收已实际执行上述安装路径，并从 `0.1.6` 连续升级至 `0.1.7`、`0.1.8`；推送后又从同一 Git marketplace 全新安装当前 `0.1.9`。每次显式 setup 后 bundle、runtime 与 daemon 都报告一致版本。它验证的是 CLI marketplace 路径，不把未单独观察的 Codex Desktop 更新交互写成既成事实。本提案不添加自研 updater 来绕开 Codex 的安装面。
+公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。2026-08-26 的干净隔离验收已实际执行上述安装路径，并从 `0.1.6` 连续升级至 `0.1.7`、`0.1.8`；推送后又从同一 Git marketplace 全新安装 `0.1.9`。2026-08-27 在新的隔离 `CODEX_HOME` 安装 `0.1.16` 后，其 launcher 的 `setup --no-open` 回读 bundle/runtime/daemon 版本一致、固定持久 endpoint 为空闲。此处复用了同项目的现有用户级控制面；因为 macOS 的 LaunchAgent 标签唯一，不宣称已在同一登录用户下创建第二个隔离 daemon。它验证的是 CLI marketplace 路径，不把未单独观察的 Codex Desktop 更新交互写成既成事实。本提案不添加自研 updater 来绕开 Codex 的安装面。
 
 ## 实施包与文件责任
 

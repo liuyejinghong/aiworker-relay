@@ -44,7 +44,7 @@ The developer's explicit model and reasoning choice always wins. A Codex recomme
 
 ## Current release status
 
-**Pre-release.** v0.1.16 provides a persistent loopback dashboard without idle provider activity or changes to the user's global environment. The explicitly selected NVIDIA Profile has completed a dashboard-managed detached run that wrote only the fixed acceptance marker, passed file/diff readback, and was stopped by TERM as `term_exited` without KILL. The Git-backed Marketplace CLI path has previously completed a clean current-v0.1.9 install and bundle updates; this remains pre-release evidence rather than proof of every Codex Desktop update interaction. No tag or GitHub Release is created by this pre-release.
+**Pre-release.** v0.1.16 provides a persistent loopback dashboard without idle provider activity or changes to the user's global environment. The explicitly selected NVIDIA Profile has completed a dashboard-managed detached run that wrote only the fixed acceptance marker, passed file/diff readback, and was stopped by TERM as `term_exited` without KILL. A clean isolated Codex configuration has installed `aiworker-relay@aiworker-relay` version `0.1.16`; its launcher then converged with the verified idle local control plane. This remains pre-release evidence rather than proof of every Codex Desktop update interaction. No tag or GitHub Release is created by this pre-release.
 
 Source repository: [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay). The documented Git marketplace CLI flow has been observed end to end; that does not by itself establish every Codex Desktop update interaction or a public release.
 

@@ -43,7 +43,7 @@
 - 用户级 Profile 使用原子 JSON；项目级 run 证据使用 `.orch/runs/` 下的 JSONL。真实费用日/月汇总在可靠归因前不生成，不引入数据库。
 - 持久 `external-workersd` 在空闲时只维持 loopback listener，不做状态采样、自动 provider 请求或自动派发；账户和公开跑分只接受用户主动刷新。只有活跃 external run 才有 RSS 采样。
 - 目标是升级并融合进 `sol-worker-routing-codex`，不是长期维护平行路由项目。
-- 源码开发可使用 Codex local marketplace；面向其他开发者的公开 pre-release 使用 Git-backed marketplace。Plugin 包含 `aiworker-relay` Skill，不含 MCP server；2026-08-26 已在干净隔离 `CODEX_HOME` 中实测 `0.1.6 → 0.1.7 → 0.1.8` 更新与 runtime setup 收敛，并在推送后全新安装当前 `0.1.9` 后再次得到版本一致的 runtime / daemon。该事实不等同于已发布正式版本，也不替代每种 Codex Desktop UI 更新交互的验收。
+- 源码开发可使用 Codex local marketplace；面向其他开发者的公开 pre-release 使用 Git-backed marketplace。Plugin 包含 `aiworker-relay` Skill，不含 MCP server；2026-08-26 已在干净隔离 `CODEX_HOME` 中实测 `0.1.6 → 0.1.7 → 0.1.8` 更新与 runtime setup 收敛，并在推送后全新安装 `0.1.9`。2026-08-27 又在新的隔离 `CODEX_HOME` 从公开 Git Marketplace 安装 `0.1.16`，其 launcher 的 `setup --no-open` 与同项目、空闲的本机控制面回读 bundle/runtime/daemon 一致。该事实不等同于已发布正式版本，也不替代每种 Codex Desktop UI 更新交互的验收。
 - 公开 pre-release 源码仓库是 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。仓库公开不等于任意新 bundle 已自动到达用户本机；用户获得新 bundle 后仍须显式运行 `$aiworker-relay setup`。
 - `$aiworker-relay setup` 使用 Python 3.12+ 在用户应用数据目录创建并复用专用 `venv`；明确的 setup 请求授权这一次本机安装，缺失依赖时不再要求第二次对话确认，不依赖或改写全局 Python 包。泛泛的配置请求不得自动 bootstrap。用户应用数据目录分别为 macOS `~/Library/Application Support/Codex External Workers`、Windows `%LOCALAPPDATA%\\Codex External Workers`、Linux `$XDG_DATA_HOME/codex-external-workers`（默认 `~/.local/share/codex-external-workers`）。
 - `external-workersd` 只绑定 loopback `127.0.0.1`；`orch setup` 与 `orch dispatch --profile <id> --packet <path>` 是由 Skill 调用的真实本机入口。
