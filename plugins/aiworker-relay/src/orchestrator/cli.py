@@ -196,7 +196,15 @@ def ensure_daemon(
         )
     if isinstance(record, dict):
         pid = record.get("pid")
-        if not isinstance(pid, int) or pid <= 0:
+        port_value = record.get("port")
+        if (
+            not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or pid <= 0
+            or not isinstance(port_value, int)
+            or isinstance(port_value, bool)
+            or not 1 <= port_value <= 65535
+        ):
             raise CLIError(
                 "external-workersd has an unknown daemon record; inspect it before reuse"
             )
@@ -288,7 +296,15 @@ def ensure_daemon(
             ) from exc
         if isinstance(record, dict):
             pid = record.get("pid")
-            if not isinstance(pid, int) or pid <= 0:
+            port_value = record.get("port")
+            if (
+                not isinstance(pid, int)
+                or isinstance(pid, bool)
+                or pid <= 0
+                or not isinstance(port_value, int)
+                or isinstance(port_value, bool)
+                or not 1 <= port_value <= 65535
+            ):
                 continue
             endpoint = _endpoint_from_record(record)
             capability = record.get("capability")
