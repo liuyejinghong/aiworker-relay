@@ -147,6 +147,9 @@ class ProfileStore:
         return self._profiles.get(profile_id)
 
     def put(self, profile: Profile) -> Profile:
+        # No evidence-backed promotion operation has been accepted. Fail closed
+        # for every current write while preserving existing records on reload.
+        profile.verification = "unverified"
         self._profiles[profile.id] = profile
         self._save()
         return profile
