@@ -32,6 +32,10 @@ class RuntimeUpdateError(RuntimeError):
     """The app-local runtime cannot be safely reconciled."""
 
 
+class PersistentEntryChangedError(RuntimeUpdateError):
+    """The current setup changed the owned persistent entry before failing."""
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Never carry a local capability to a redirect target."""
 
@@ -343,18 +347,91 @@ def _remove_runtime_tree(path: Path) -> None:
     shutil.rmtree(path)
 
 
-def restore_interrupted_runtime(root: Path) -> None:
-    """Recover the sole short-lived backup left by an interrupted replacement."""
+def _candidate_daemon_is_accepted(
+    snapshot: DaemonSnapshot,
+    *,
+    expected_version: str,
+    project_root: Path,
+) -> bool:
+    """Return whether the current runtime has passed the setup identity checks."""
+
+    return (
+        snapshot.state in {"active", "idle"}
+        and snapshot.version == expected_version
+        and snapshot.endpoint == f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
+        and snapshot.persistent
+        and snapshot.project_root is not None
+        and Path(snapshot.project_root).resolve() == project_root.resolve()
+    )
+
+
+def _active_run_hint(snapshot: DaemonSnapshot) -> str:
+    return ", ".join(snapshot.active_runs) or "an external run"
+
+
+def restore_interrupted_runtime(
+    root: Path,
+    *,
+    project_root: Path | None = None,
+    expected_version: str | None = None,
+) -> tuple[str | None, bool]:
+    """Recover or defer the one transaction marked by ``venv.previous``.
+
+    The marker is intentionally the only persisted transaction state.  A
+    verified candidate daemon may finish its setup while active; cleanup is
+    deferred until the next idle setup.  Any other live daemon state is left
+    untouched unless it is verified idle and can be stopped through the
+    existing capability-gated endpoint.
+    """
 
     runtime = root / "venv"
     previous = root / "venv.previous"
     if not previous.exists():
-        return
-    if runtime.exists():
-        raise RuntimeUpdateError("runtime recovery is blocked: both venv and venv.previous exist")
+        return None, False
     if previous.is_symlink() or not previous.is_dir():
         raise RuntimeUpdateError("runtime recovery is blocked: venv.previous is invalid")
+    if not runtime.exists():
+        previous.replace(runtime)
+        return None, False
+    if runtime.is_symlink() or not runtime.is_dir():
+        raise RuntimeUpdateError("runtime recovery is blocked: venv is invalid")
+
+    expected = expected_version or bundle_version()
+    requested_project_root = (project_root or Path.cwd()).resolve()
+    candidate_version = installed_runtime_version(venv_orch(runtime))
+    snapshot = daemon_snapshot(root)
+    candidate_accepted = candidate_version == expected and _candidate_daemon_is_accepted(
+        snapshot,
+        expected_version=expected,
+        project_root=requested_project_root,
+    )
+    if candidate_accepted:
+        if snapshot.state == "active":
+            return (
+                "runtime update finalization deferred while "
+                f"{_active_run_hint(snapshot)} remains active; rerun setup after it finishes"
+            ), False
+        _remove_runtime_tree(previous)
+        return None, False
+
+    if snapshot.state == "active":
+        return (
+            "runtime recovery deferred while "
+            f"{_active_run_hint(snapshot)} remains active; rerun setup after it finishes"
+        ), False
+    if snapshot.state not in {"active", "idle", "missing", "stale"}:
+        raise RuntimeUpdateError(
+            "runtime recovery is blocked because daemon state is unknown: "
+            f"{snapshot.reason}"
+        )
+    stopped_verified_daemon = False
+    if snapshot.state == "idle":
+        shutdown_idle_daemon(snapshot)
+        stopped_verified_daemon = True
+
+    _remove_runtime_tree(runtime)
     previous.replace(runtime)
+    return None, stopped_verified_daemon
 
 
 def _install_runtime_at(runtime: Path, *, expected_version: str) -> Path:
@@ -403,6 +480,8 @@ def runtime_status() -> dict[str, object]:
         daemon.version != expected_version
         or daemon.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
         or not daemon.persistent
+        or daemon.project_root is None
+        or Path(daemon.project_root).resolve() != Path.cwd().resolve()
     ):
         update_status = (
             "update_deferred_active_run"
@@ -411,6 +490,15 @@ def runtime_status() -> dict[str, object]:
         )
     else:
         update_status = "up_to_date"
+    if (root / "venv.previous").exists():
+        # A pending marker always requires setup to finish or recover the
+        # transaction before dispatch may reuse the current runtime.
+        if daemon.state == "active":
+            update_status = "update_deferred_active_run"
+        elif daemon.state == "unknown":
+            update_status = "update_blocked_unknown_daemon"
+        else:
+            update_status = "update_required"
     return {
         "python_supported": sys.version_info >= (3, 12),
         "python_version": ".".join(map(str, sys.version_info[:3])),
@@ -443,7 +531,7 @@ def install_runtime() -> Path:
 
 
 def replace_runtime() -> Path:
-    """Replace one inactive app-local runtime and restore it on failure."""
+    """Install a candidate runtime while retaining the previous runtime marker."""
 
     root = app_data_root()
     runtime = root / "venv"
@@ -463,15 +551,22 @@ def replace_runtime() -> Path:
         raise RuntimeUpdateError(
             f"runtime update failed; the previous runtime was restored: {exc}"
         ) from exc
-    _remove_runtime_tree(previous)
     return orch
+
+
+def commit_runtime_update(root: Path | None = None) -> None:
+    """Commit an accepted candidate by removing its previous-runtime marker."""
+
+    _remove_runtime_tree((root or app_data_root()) / "venv.previous")
 
 
 def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
     """Prepare setup without updating during a live external run."""
 
     root = app_data_root()
-    restore_interrupted_runtime(root)
+    recovery_deferred, recovery_stopped_verified_daemon = restore_interrupted_runtime(root)
+    if recovery_deferred:
+        return None, recovery_deferred, False
     runtime = root / "venv"
     orch = venv_orch(runtime)
     expected_version = bundle_version()
@@ -479,7 +574,8 @@ def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
     snapshot = daemon_snapshot(root)
     runtime_needs_replace = actual_version != expected_version
     daemon_needs_restart = snapshot.state in {"active", "idle"} and (
-        snapshot.version != expected_version
+        runtime_needs_replace
+        or snapshot.version != expected_version
         or snapshot.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
         or not snapshot.persistent
     )
@@ -496,31 +592,137 @@ def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
         raise RuntimeUpdateError(
             f"setup is blocked because daemon state is unknown: {snapshot.reason}"
         )
-    stopped_verified_daemon = snapshot.state == "idle" and daemon_needs_restart
-    if stopped_verified_daemon:
+    stopped_current_daemon = (
+        snapshot.state == "idle"
+        and daemon_needs_restart
+        and runtime.is_dir()
+        and not runtime.is_symlink()
+    )
+    stopped_verified_daemon = recovery_stopped_verified_daemon or stopped_current_daemon
+    if stopped_current_daemon:
         shutdown_idle_daemon(snapshot)
     if runtime_needs_replace:
-        return (
-            replace_runtime() if runtime.exists() else install_runtime(),
-            None,
-            stopped_verified_daemon,
-        )
+        try:
+            candidate_orch = replace_runtime() if runtime.exists() else install_runtime()
+            if snapshot.state == "idle" and daemon_needs_restart and not stopped_current_daemon:
+                shutdown_idle_daemon(snapshot)
+                stopped_verified_daemon = True
+        except Exception as failure:
+            if stopped_verified_daemon:
+                rollback_runtime_update(
+                    root=root,
+                    project_root=Path.cwd(),
+                    codex_path=current_codex_cli(),
+                    node_path=current_node_cli(),
+                    failure=failure,
+                    restore_runtime=False,
+                    allow_loaded_replacement=True,
+                )
+                raise RuntimeUpdateError(
+                    f"{failure}; the persistent control plane was restored"
+                ) from failure
+            raise
+        return candidate_orch, None, stopped_verified_daemon
     if not orch.is_file():
         raise RuntimeUpdateError("local runtime is incomplete; rerun setup after resolving it")
     return orch, None, stopped_verified_daemon
 
 
-def _validate_setup_result(expected_version: str) -> None:
+def _validate_setup_result(
+    expected_version: str, *, project_root: Path | None = None
+) -> None:
+    """Validate the daemon identity that authoritatively accepts a setup."""
+
     snapshot = daemon_snapshot(app_data_root())
-    if (
-        snapshot.state not in {"active", "idle"}
-        or snapshot.version != expected_version
-        or snapshot.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
-        or not snapshot.persistent
+    if not _candidate_daemon_is_accepted(
+        snapshot,
+        expected_version=expected_version,
+        project_root=(project_root or Path.cwd()).resolve(),
     ):
         raise RuntimeUpdateError(
             "runtime setup did not produce the persistent control plane expected by this Plugin"
         )
+
+
+def _persistent_setup_command(
+    *, codex_path: Path | None, no_open: bool = False
+) -> list[str]:
+    command = [
+        "setup",
+        "--port",
+        str(PERSISTENT_CONTROL_PORT),
+        "--persistent",
+    ]
+    if codex_path is not None:
+        command.extend(["--codex-path", str(codex_path)])
+    if no_open:
+        command.append("--no-open")
+    return command
+
+
+def rollback_runtime_update(
+    *,
+    root: Path,
+    project_root: Path,
+    codex_path: Path | None,
+    node_path: Path | None,
+    failure: Exception,
+    restore_runtime: bool = True,
+    allow_loaded_replacement: bool = False,
+) -> None:
+    """Boundedly restore the old runtime after candidate setup fails."""
+
+    runtime = root / "venv"
+    previous = root / "venv.previous"
+    if restore_runtime and not previous.exists():
+        raise RuntimeUpdateError(
+            f"{failure}; runtime rollback is unavailable because venv.previous is missing"
+        )
+    snapshot = daemon_snapshot(root)
+    if snapshot.state == "active":
+        raise RuntimeUpdateError(
+            f"{failure}; runtime rollback deferred while "
+            f"{_active_run_hint(snapshot)} remains active; "
+            "venv and venv.previous were preserved"
+        )
+    if snapshot.state not in {"active", "idle", "missing", "stale"}:
+        raise RuntimeUpdateError(
+            f"{failure}; runtime rollback is blocked because daemon state is unknown: "
+            f"{snapshot.reason}; venv and venv.previous were preserved"
+        )
+
+    stopped_verified_daemon = allow_loaded_replacement
+    try:
+        if snapshot.state == "idle":
+            shutdown_idle_daemon(snapshot)
+            stopped_verified_daemon = True
+        if restore_runtime:
+            _remove_runtime_tree(runtime)
+            previous.replace(runtime)
+        old_orch = venv_orch(runtime)
+        old_version = installed_runtime_version(old_orch)
+        if old_version is None:
+            raise RuntimeUpdateError("restored runtime version is unavailable")
+        ensure_macos_persistent_entry(
+            runtime=runtime,
+            project_root=project_root,
+            codex_path=codex_path,
+            node_path=node_path,
+            allow_loaded_replacement=stopped_verified_daemon,
+        )
+        exit_code = run_orch(
+            old_orch,
+            _persistent_setup_command(codex_path=codex_path, no_open=True),
+        )
+        if exit_code:
+            raise RuntimeUpdateError(
+                f"restored control-plane setup failed with exit code {exit_code}"
+            )
+        _validate_setup_result(old_version, project_root=project_root)
+    except Exception as rollback_failure:
+        raise RuntimeUpdateError(
+            f"{failure}; runtime rollback failed: {rollback_failure}"
+        ) from rollback_failure
 
 
 def macos_launch_agent_path(home: Path | None = None) -> Path:
@@ -741,18 +943,26 @@ def ensure_macos_persistent_entry(
     else:
         _assert_fixed_port_is_available()
     _write_launch_agent(agent_path, payload, allow_owned_update=True)
-    result = subprocess.run(
-        ["launchctl", "bootstrap", domain, str(agent_path)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["launchctl", "bootstrap", domain, str(agent_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise PersistentEntryChangedError(
+            f"could not start the AIworker Relay LaunchAgent: {exc}"
+        ) from exc
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "launchctl failed"
-        raise RuntimeUpdateError(
+        raise PersistentEntryChangedError(
             f"could not start the AIworker Relay LaunchAgent: {detail}"
         )
-    _wait_for_persistent_daemon(project_root=project_root)
+    try:
+        _wait_for_persistent_daemon(project_root=project_root)
+    except RuntimeUpdateError as exc:
+        raise PersistentEntryChangedError(str(exc)) from exc
 
 
 def run_orch(orch: Path, arguments: Sequence[str]) -> int:
@@ -799,29 +1009,56 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"aiworker-relay: {deferred}")
                 return 0
             assert orch is not None
+            root = app_data_root()
+            candidate_transaction = (root / "venv.previous").exists()
             codex_path = current_codex_cli()
             node_path = current_node_cli()
-            ensure_macos_persistent_entry(
-                runtime=orch.parent.parent,
-                project_root=Path.cwd(),
-                codex_path=codex_path,
-                node_path=node_path,
-                allow_loaded_replacement=stopped_verified_daemon,
-            )
-            command = [
-                "setup",
-                "--port",
-                str(PERSISTENT_CONTROL_PORT),
-                "--persistent",
-            ]
-            if codex_path is not None:
-                command.extend(["--codex-path", str(codex_path)])
-            if args.no_open:
-                command.append("--no-open")
-            exit_code = run_orch(orch, command)
-            if exit_code:
-                return exit_code
-            _validate_setup_result(bundle_version())
+            project_root = Path.cwd()
+            try:
+                ensure_macos_persistent_entry(
+                    runtime=orch.parent.parent,
+                    project_root=project_root,
+                    codex_path=codex_path,
+                    node_path=node_path,
+                    allow_loaded_replacement=stopped_verified_daemon,
+                )
+                exit_code = run_orch(
+                    orch,
+                    _persistent_setup_command(
+                        codex_path=codex_path,
+                        no_open=args.no_open,
+                    ),
+                )
+                if exit_code:
+                    raise RuntimeUpdateError(
+                        f"persistent control-plane setup failed with exit code {exit_code}"
+                    )
+                _validate_setup_result(bundle_version(), project_root=project_root)
+            except Exception as failure:
+                if candidate_transaction or stopped_verified_daemon:
+                    entry_was_changed = isinstance(
+                        failure, PersistentEntryChangedError
+                    )
+                    rollback_runtime_update(
+                        root=root,
+                        project_root=project_root,
+                        codex_path=codex_path,
+                        node_path=node_path,
+                        failure=failure,
+                        restore_runtime=candidate_transaction,
+                        allow_loaded_replacement=(
+                            stopped_verified_daemon or entry_was_changed
+                        ),
+                    )
+                    restored = (
+                        "the previous runtime and control plane were restored"
+                        if candidate_transaction
+                        else "the persistent control plane was restored"
+                    )
+                    raise RuntimeUpdateError(f"{failure}; {restored}") from failure
+                raise
+            if candidate_transaction:
+                commit_runtime_update(root)
             return 0
         if status["update_status"] != "up_to_date":
             print(

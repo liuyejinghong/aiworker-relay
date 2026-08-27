@@ -139,7 +139,7 @@ class BootstrapSmokeTests(unittest.TestCase):
                 "--no-open",
             ],
         )
-        validate.assert_called_once_with(__version__)
+        validate.assert_called_once_with(__version__, project_root=Path.cwd())
 
     def test_orch_setup_forwards_the_persistent_endpoint(self) -> None:
         output = io.StringIO()
@@ -233,6 +233,42 @@ class BootstrapSmokeTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         self.assertEqual(run.call_args.args[0][1], "print")
         write_agent.assert_not_called()
+
+    def test_failed_new_launch_agent_reports_that_the_entry_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(launcher.sys, "platform", "darwin"),
+                patch.object(
+                    launcher,
+                    "daemon_snapshot",
+                    return_value=launcher.DaemonSnapshot("missing"),
+                ),
+                patch.object(
+                    launcher.subprocess,
+                    "run",
+                    side_effect=[
+                        MagicMock(returncode=1),
+                        MagicMock(returncode=0),
+                    ],
+                ),
+                patch.object(launcher, "_assert_fixed_port_is_available"),
+                patch.object(launcher, "_write_launch_agent"),
+                patch.object(
+                    launcher,
+                    "_wait_for_persistent_daemon",
+                    side_effect=launcher.RuntimeUpdateError("health failed"),
+                ),
+                self.assertRaisesRegex(
+                    launcher.PersistentEntryChangedError, "health failed"
+                ),
+            ):
+                launcher.ensure_macos_persistent_entry(
+                    runtime=root / "venv",
+                    project_root=root / "project",
+                    codex_path=None,
+                    node_path=None,
+                )
 
     def test_wait_for_fixed_port_release_retries_after_owned_entry_teardown(self) -> None:
         with (
@@ -395,6 +431,53 @@ class BootstrapSmokeTests(unittest.TestCase):
         self.assertIn("run-1", deferred or "")
         self.assertFalse(stopped)
 
+    def test_pending_previous_marker_prevents_runtime_status_from_being_up_to_date(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv/bin"
+            runtime.mkdir(parents=True)
+            (runtime / "python").touch()
+            (runtime / "orch").touch()
+            (root / "venv.previous").mkdir()
+            snapshot = launcher.DaemonSnapshot(
+                "idle",
+                version=__version__,
+                endpoint="http://127.0.0.1:49178",
+                persistent=True,
+                project_root=str(Path.cwd().resolve()),
+            )
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "installed_runtime_version", return_value=__version__),
+                patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+            ):
+                status = launcher.runtime_status()
+
+            self.assertEqual(status["update_status"], "update_required")
+
+    def test_runtime_status_rejects_a_control_plane_for_another_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv/bin"
+            runtime.mkdir(parents=True)
+            (runtime / "python").touch()
+            (runtime / "orch").touch()
+            snapshot = launcher.DaemonSnapshot(
+                "idle",
+                version=__version__,
+                endpoint="http://127.0.0.1:49178",
+                persistent=True,
+                project_root=str(root / "another-project"),
+            )
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "installed_runtime_version", return_value=__version__),
+                patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+            ):
+                status = launcher.runtime_status()
+
+            self.assertEqual(status["update_status"], "update_required")
+
     def test_idle_transient_daemon_is_restarted_for_the_stable_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -420,6 +503,77 @@ class BootstrapSmokeTests(unittest.TestCase):
         self.assertIsNone(deferred)
         self.assertTrue(stopped)
         shutdown.assert_called_once_with(snapshot)
+
+    def test_install_failure_after_idle_shutdown_restores_the_old_control_plane(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._prepare_candidate_transaction(root)
+            old_snapshot = launcher.DaemonSnapshot(
+                "idle",
+                version="0.1.0",
+                endpoint="http://127.0.0.1:49178",
+                persistent=True,
+                project_root=str(Path.cwd().resolve()),
+            )
+            stale_snapshot = launcher.DaemonSnapshot("stale")
+            ensure = MagicMock()
+            run_orch = MagicMock(return_value=0)
+            validate = MagicMock()
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "bundle_version", return_value=__version__),
+                patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
+                patch.object(
+                    launcher,
+                    "daemon_snapshot",
+                    side_effect=[old_snapshot, stale_snapshot, stale_snapshot],
+                ),
+                patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+                patch.object(
+                    launcher,
+                    "replace_runtime",
+                    side_effect=launcher.RuntimeUpdateError("candidate version failed"),
+                ),
+                patch.object(launcher, "current_codex_cli", return_value=None),
+                patch.object(launcher, "current_node_cli", return_value=None),
+                patch.object(launcher, "ensure_macos_persistent_entry", ensure),
+                patch.object(launcher, "run_orch", run_orch),
+                patch.object(launcher, "_validate_setup_result", validate),
+            ):
+                with self.assertRaisesRegex(
+                    launcher.RuntimeUpdateError, "persistent control plane was restored"
+                ):
+                    launcher.reconcile_runtime()
+
+            shutdown.assert_called_once_with(old_snapshot)
+            ensure.assert_called_once()
+            run_orch.assert_called_once()
+            validate.assert_called_once_with("0.1.0", project_root=Path.cwd())
+
+    def test_missing_runtime_install_failure_does_not_stop_an_idle_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot = launcher.DaemonSnapshot(
+                "idle",
+                version="0.1.0",
+                endpoint="http://127.0.0.1:49178",
+                persistent=True,
+                project_root=str(Path.cwd().resolve()),
+            )
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                patch.object(
+                    launcher,
+                    "install_runtime",
+                    side_effect=launcher.RuntimeUpdateError("install failed"),
+                ),
+                patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+            ):
+                with self.assertRaisesRegex(launcher.RuntimeUpdateError, "install failed"):
+                    launcher.reconcile_runtime()
+
+            shutdown.assert_not_called()
 
     def test_failed_runtime_replacement_restores_the_previous_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -447,6 +601,278 @@ class BootstrapSmokeTests(unittest.TestCase):
                 profiles.read_text(encoding="utf-8"),
                 '{"version": 1, "profiles": []}\n',
             )
+
+    def test_successful_runtime_replacement_retains_previous_until_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv"
+            runtime.mkdir()
+            (runtime / "old-runtime.txt").write_text("old", encoding="utf-8")
+
+            def install_candidate(candidate: Path, *, expected_version: str) -> Path:
+                del expected_version
+                orch = candidate / "bin" / "orch"
+                orch.parent.mkdir(parents=True)
+                orch.touch()
+                return orch
+
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "_install_runtime_at", side_effect=install_candidate),
+            ):
+                candidate_orch = launcher.replace_runtime()
+
+            self.assertEqual(candidate_orch, root / "venv/bin/orch")
+            self.assertTrue((root / "venv.previous/old-runtime.txt").is_file())
+            self.assertTrue((root / "venv/bin/orch").is_file())
+            launcher.commit_runtime_update(root)
+            self.assertFalse((root / "venv.previous").exists())
+
+    def test_setup_commits_previous_only_after_authoritative_final_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv"
+            (runtime / "bin").mkdir(parents=True)
+            orch = runtime / "bin/orch"
+            orch.touch()
+            previous = root / "venv.previous"
+            previous.mkdir()
+            (previous / "old-runtime.txt").write_text("old", encoding="utf-8")
+            events: list[str] = []
+
+            def validate(version: str, *, project_root: Path) -> None:
+                self.assertEqual(version, __version__)
+                self.assertEqual(project_root, Path.cwd())
+                self.assertTrue(previous.exists())
+                events.append("validate")
+
+            def commit(update_root: Path) -> None:
+                self.assertEqual(update_root, root)
+                self.assertTrue(previous.exists())
+                events.append("commit")
+                launcher._remove_runtime_tree(previous)
+
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(
+                    launcher,
+                    "runtime_status",
+                    return_value={"python_supported": True},
+                ),
+                patch.object(
+                    launcher,
+                    "reconcile_runtime",
+                    return_value=(orch, None, False),
+                ),
+                patch.object(launcher, "current_codex_cli", return_value=None),
+                patch.object(launcher, "current_node_cli", return_value=None),
+                patch.object(launcher, "ensure_macos_persistent_entry"),
+                patch.object(launcher, "run_orch", return_value=0),
+                patch.object(launcher, "_validate_setup_result", side_effect=validate),
+                patch.object(launcher, "commit_runtime_update", side_effect=commit),
+            ):
+                exit_code = launcher.main(["setup", "--no-open"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(events, ["validate", "commit"])
+
+    def _prepare_candidate_transaction(self, root: Path) -> tuple[Path, Path]:
+        runtime = root / "venv"
+        (runtime / "bin").mkdir(parents=True)
+        orch = runtime / "bin/orch"
+        orch.touch()
+        previous = root / "venv.previous"
+        (previous / "bin").mkdir(parents=True)
+        (previous / "old-runtime.txt").write_text("old", encoding="utf-8")
+        (previous / "bin/orch").touch()
+        return orch, previous
+
+    def test_post_install_failures_roll_back_runtime_and_control_plane(self) -> None:
+        for failure_step in (
+            "persistent_entry_changed",
+            "run_orch_return",
+            "run_orch_exception",
+            "final_validation",
+        ):
+            with self.subTest(failure_step=failure_step), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                orch, previous = self._prepare_candidate_transaction(root)
+                profiles = root / "profiles.json"
+                profiles.write_text('{"version": 1, "profiles": []}\n', encoding="utf-8")
+                orch_marker = root / ".orch/run-marker"
+                orch_marker.parent.mkdir()
+                orch_marker.write_text("keep", encoding="utf-8")
+                source_marker = root / "source-workspace/marker"
+                source_marker.parent.mkdir()
+                source_marker.write_text("keep", encoding="utf-8")
+                snapshot = (
+                    launcher.DaemonSnapshot("stale")
+                    if failure_step == "persistent_entry_changed"
+                    else launcher.DaemonSnapshot(
+                        "idle",
+                        version=__version__,
+                        endpoint="http://127.0.0.1:49178",
+                        persistent=True,
+                        project_root=str(Path.cwd().resolve()),
+                    )
+                )
+                ensure = MagicMock()
+                run_orch = MagicMock(
+                    side_effect=(
+                        [RuntimeError("daemon start failed"), 0]
+                        if failure_step == "run_orch_exception"
+                        else [1, 0]
+                        if failure_step == "run_orch_return"
+                        else [0, 0]
+                    )
+                )
+                validate = MagicMock()
+                shutdown = MagicMock()
+                if failure_step == "persistent_entry_changed":
+                    ensure.side_effect = [
+                        launcher.PersistentEntryChangedError("persistent entry failed"),
+                        None,
+                    ]
+                elif failure_step == "final_validation":
+                    validate.side_effect = [
+                        launcher.RuntimeUpdateError("final validation failed"),
+                        None,
+                    ]
+
+                with (
+                    patch.object(launcher, "app_data_root", return_value=root),
+                    patch.object(launcher, "runtime_status", return_value={"python_supported": True}),
+                    patch.object(launcher, "reconcile_runtime", return_value=(orch, None, False)),
+                    patch.object(launcher, "current_codex_cli", return_value=None),
+                    patch.object(launcher, "current_node_cli", return_value=None),
+                    patch.object(launcher, "ensure_macos_persistent_entry", ensure),
+                    patch.object(launcher, "run_orch", run_orch),
+                    patch.object(launcher, "_validate_setup_result", validate),
+                    patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                    patch.object(launcher, "shutdown_idle_daemon", shutdown),
+                    patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
+                ):
+                    exit_code = launcher.main(["setup", "--no-open"])
+
+                self.assertEqual(exit_code, 1)
+                self.assertFalse(previous.exists())
+                self.assertTrue((root / "venv/old-runtime.txt").is_file())
+                self.assertEqual(ensure.call_count, 2)
+                self.assertEqual(
+                    run_orch.call_count,
+                    1 if failure_step == "persistent_entry_changed" else 2,
+                )
+                self.assertEqual(validate.call_count, 2 if failure_step == "final_validation" else 1)
+                if failure_step == "persistent_entry_changed":
+                    shutdown.assert_not_called()
+                    self.assertTrue(
+                        ensure.call_args_list[1].kwargs["allow_loaded_replacement"]
+                    )
+                else:
+                    shutdown.assert_called_once()
+                self.assertEqual(
+                    profiles.read_text(encoding="utf-8"),
+                    '{"version": 1, "profiles": []}\n',
+                )
+                self.assertEqual(orch_marker.read_text(encoding="utf-8"), "keep")
+                self.assertEqual(source_marker.read_text(encoding="utf-8"), "keep")
+
+    def test_interrupted_runtime_with_only_previous_restores_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            previous = root / "venv.previous"
+            previous.mkdir()
+            (previous / "old-runtime.txt").write_text("old", encoding="utf-8")
+
+            launcher.restore_interrupted_runtime(root)
+
+            self.assertTrue((root / "venv/old-runtime.txt").is_file())
+            self.assertFalse(previous.exists())
+
+    def test_interrupted_accepted_candidate_commits_idle_and_defers_active(self) -> None:
+        for state in ("idle", "active"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                orch, previous = self._prepare_candidate_transaction(root)
+                snapshot = launcher.DaemonSnapshot(
+                    state,
+                    version=__version__,
+                    endpoint="http://127.0.0.1:49178",
+                    active_runs=("run-1",) if state == "active" else (),
+                    persistent=True,
+                    project_root=str(Path.cwd().resolve()),
+                )
+                with (
+                    patch.object(launcher, "installed_runtime_version", return_value=__version__),
+                    patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                    patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+                ):
+                    deferred, stopped = launcher.restore_interrupted_runtime(
+                        root, project_root=Path.cwd(), expected_version=__version__
+                    )
+                self.assertTrue(orch.exists())
+                if state == "idle":
+                    self.assertIsNone(deferred)
+                    self.assertFalse(previous.exists())
+                else:
+                    self.assertIn("deferred", deferred or "")
+                    self.assertTrue(previous.exists())
+                    self.assertFalse(stopped)
+                shutdown.assert_not_called()
+
+    def test_interrupted_nonaccepted_candidate_active_or_unknown_is_untouched(self) -> None:
+        for state in ("active", "unknown"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                orch, previous = self._prepare_candidate_transaction(root)
+                snapshot = launcher.DaemonSnapshot(
+                    state,
+                    active_runs=("run-1",) if state == "active" else (),
+                    reason="identity unavailable" if state == "unknown" else None,
+                )
+                with (
+                    patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
+                    patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                    patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+                ):
+                    if state == "active":
+                        deferred, stopped = launcher.restore_interrupted_runtime(
+                            root, expected_version=__version__
+                        )
+                        self.assertIn("deferred", deferred or "")
+                        self.assertFalse(stopped)
+                    else:
+                        with self.assertRaises(launcher.RuntimeUpdateError):
+                            launcher.restore_interrupted_runtime(
+                                root, expected_version=__version__
+                            )
+                self.assertTrue(orch.exists())
+                self.assertTrue(previous.exists())
+                shutdown.assert_not_called()
+
+    def test_interrupted_nonaccepted_idle_missing_or_stale_recovers(self) -> None:
+        for state in ("idle", "missing", "stale"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                orch, previous = self._prepare_candidate_transaction(root)
+                snapshot = launcher.DaemonSnapshot(state)
+                with (
+                    patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
+                    patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                    patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+                ):
+                    _, stopped = launcher.restore_interrupted_runtime(
+                        root, expected_version=__version__
+                    )
+                self.assertTrue((root / "venv/old-runtime.txt").is_file())
+                self.assertTrue(orch.exists())
+                self.assertFalse(previous.exists())
+                if state == "idle":
+                    self.assertTrue(stopped)
+                    shutdown.assert_called_once_with(snapshot)
+                else:
+                    self.assertFalse(stopped)
+                    shutdown.assert_not_called()
 
     def test_dispatch_refuses_a_runtime_that_requires_setup(self) -> None:
         output = io.StringIO()

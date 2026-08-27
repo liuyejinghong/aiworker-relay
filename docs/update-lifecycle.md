@@ -77,7 +77,7 @@ Codex Marketplace / Plugin UI
 | --- | --- | --- |
 | `up_to_date` | bundle、runtime、健康 daemon（若存在）版本一致，且 daemon 位于固定持久入口 | 正常 setup / dispatch |
 | `runtime_missing` | 没有可用专用 venv | setup 创建首次 runtime |
-| `update_required` | runtime 缺失、无法执行 version，或版本不同 | setup 进入更新判定 |
+| `update_required` | runtime 缺失、无法执行 version、版本不同，或存在待完成的 `venv.previous` 事务 marker | setup 进入更新判定 |
 | `update_deferred_active_run` | 受健康检查确认的 daemon 有 `starting`、`running` 或 `stopping` external run | 保留原 runtime 与进程；报告需在 run 结束后重新 setup |
 | `update_blocked_unknown_daemon` | daemon PID 存在，但 health / overview 与记录不一致或无法确认活跃状态 | 不替换 runtime；报告恢复阻塞，避免误杀未知进程 |
 | 更新失败后已恢复 | 新 runtime 未通过安装、version 或 health 检查，旧 runtime 已恢复 | setup 明确报告恢复结果与失败原因 |
@@ -95,11 +95,11 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 1. launcher 从新 bundle 的 package `VERSION` 与现有 `orch version` 读取目标和现状；不依赖全局 Python 依赖。
 2. 若有 daemon，先以 `daemon.json`、`/api/health` 和 `/api/overview` 交叉确认它就是本产品的 daemon，且没有活跃 external run。
 3. 只在该判定成立时，使用记录中的 capability 请求 idle daemon 正常退出；不再为缺少该控制动作的旧 daemon 直接发送信号。macOS 的 LaunchAgent 将受控退出视为一次正常退出，直到新 runtime 就绪后才重新启动同一 daemon；旧记录没有 capability 时保持 unknown 并阻塞更新。
-4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv` 并从当前 Plugin bundle 安装 runtime。
-5. 依次检查新 `orch version`、固定 `127.0.0.1:49178` daemon health、持久状态和版本一致性。全部通过才删除 `venv.previous`。
-6. 任一步失败时，清理未完成的新 venv，并将 `venv.previous` 放回原路径；Profile、Key 与项目运行证据不写入、不迁移。
+4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv` 并从当前 Plugin bundle 安装 runtime；安装和版本检查失败时沿用现有行为立即恢复旧 runtime，成功后仍保留该 marker。若此前已停止 verified-idle daemon，也要用恢复后的旧 runtime 重启并校验持久控制面。
+5. 由持久 entry、daemon 启动和权威最终校验共同接受 candidate。最终校验必须确认预期 bundle version、固定 `127.0.0.1:49178` endpoint、`persistent`、以及当前项目 `project_root`；全部通过后才删除 `venv.previous`。
+6. 任一 post-install 步骤失败时，只有已验证 idle 的 daemon 才能通过 capability-gated shutdown 停止；随后恢复旧 runtime、用旧 runtime 重启持久控制面并校验旧 version、endpoint、persistent 和 `project_root`。若 daemon active 或 unknown，则不停止、不删除任一目录，明确报告 deferred / blocked。
 
-如果进程在第 4 至第 5 步之间被中断，下一次 setup 发现 `venv` 缺失且 `venv.previous` 存在时先恢复旧 runtime，再报告或重新尝试更新。该临时备份只解决一次更新事务的失败恢复，不形成长期多版本管理系统。
+如果进程在第 4 至第 5 步之间被中断，下一次 setup 按 `venv.previous` marker 做确定性恢复：只有 `venv.previous` 时直接恢复；两目录中 candidate 已完整接受且 idle 时提交删除 marker，active 时延后清理；未接受的 candidate 在 active 时延后、unknown 时阻塞、idle 时受控停止后恢复旧 runtime，missing/stale 时直接恢复。该临时备份只解决一次更新事务的失败恢复，不形成长期多版本管理系统。
 
 为在 macOS、Windows 与 Linux 上一致地替换 idle daemon，当前 runtime 提供一个仅供 launcher 使用的窄本地“正常退出”控制动作。它不是通用管理 API，也不作用于活跃 run。launcher 只对 capability 与 health/overview 身份均匹配的 idle daemon 调用该动作；控制动作缺失、认证失败或身份不完整都会保持更新阻塞，不会退回到直接处理 PID。macOS 仅在同一次 setup 已完成该受控 idle shutdown 时，才允许卸载随后处于 loaded 但无 daemon record 的 owned LaunchAgent；其他 missing/stale record 与 loaded entry 组合一律视为未知并阻塞，不猜测 active run 状态。
 
