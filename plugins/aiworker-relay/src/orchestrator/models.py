@@ -138,6 +138,7 @@ RunStatus = Literal[
     "starting",
     "running",
     "stopping",
+    "incomplete",
     "succeeded",
     "failed",
     "stopped",
@@ -162,6 +163,7 @@ class RunRecord:
     worktree: str | None = None
     pid: int | None = None
     process_group: int | None = None
+    process_started_at: float | None = None
     exit_code: int | None = None
     dirty_workspace_excluded: bool = False
     cost_state: str = "pending"

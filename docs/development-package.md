@@ -21,7 +21,7 @@
 | Result 收敛 | `last-message.md` 保存模型最终文字；daemon 独立保存 JSONL 生命周期、退出码、diff、文件清单和停止结果。Codex 将这些 artifact 一起验收。 | 不依赖 `--output-schema` 或要求模型产出可靠 JSON Schema。 |
 | Profile 可用性 | Profile 有 `enabled` / `frozen` 长期状态，以及 `unverified` / `verified` harness 状态。已验证 profile 可被 Codex 建议；未验证 profile 只能由用户显式选择并确认“实验性运行”。 | 不让 Codex 自动挑选未验证模型，也不因冻结静默换模型。 |
 | 失败处理 | 429、启动失败和模型中断写入 run 记录并允许用户手动重试。 | 不实现自动 fallback 或自动重派。 |
-| 停止 | 停止请求先向外部 run 的进程组发送 TERM，最多观察 10 秒；仍存活时由用户再次确认 KILL。最终状态必须来自 OS 观察。 | 不把一次 HTTP 点击当成停止成功。 |
+| 停止 | 停止请求先向外部 run 的进程组发送 TERM，最多观察 10 秒；仍存活时由用户再次确认 KILL。daemon 关闭会执行同一顺序、等待可收敛 run 的 finalization；TERM/KILL 后仍存活的 run 在有界时间内记录为 `incomplete` 并保留阻塞事实。进程退出后先持久化 `incomplete` 检查点；`diff.patch`、`files.json` 和自然成功所需的 `last-message.md` 齐全后才显示最终成功/停止状态。 | 不把一次 HTTP 点击当成停止成功，不在 daemon 重启后重新接管旧进程。 |
 | 账户与公开跑分 | 用量页和详情页只在用户点击时读取 OpenRouter。账户总余额需要 management Key；普通 Key 只展示 provider 返回的自身限额。跑分只保留精确模型标识的来源与时间。 | 不轮询 provider，不把账户 / Key 限额当作 run 实际费用，不写死或合成 benchmark 分数。 |
 | 费用 | 首个切片显示 `pending` / `unavailable` 归因状态。原始 CLI transcript 不持久化；token 展示需在建立有界解析来源后再加入。实际 per-run、日/月费用和预算告警在建立可靠 run-to-cost 关联后单独实现。 | 不用模型标价、`$0` 或近似值伪造实际费用。 |
 | 秘密与本地数据 | API key 只在 Web 设置页录入，由 `keyring` 保存。每个 run 的本地证据落在 `.orch/runs/<run-id>/`，不含 API key；OpenRouter HTTPS 使用系统证书库。 | 不落 `.env`、数据库、明文密钥回退或跳过 TLS 验证。 |

@@ -47,6 +47,7 @@
     running: "运行中",
     starting: "启动中",
     stopping: "结束中",
+    incomplete: "证据不完整",
     succeeded: "已完成",
     failed: "失败",
     stopped: "已停止",

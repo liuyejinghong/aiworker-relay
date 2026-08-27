@@ -535,3 +535,19 @@ Consequences:
 Each daemon startup generates a random capability and stores it only in owner-only `daemon.json`. A top-level document served from the exact `127.0.0.1` listener can receive it as a host-only HttpOnly SameSite=Strict cookie. CLI and launcher requests read the same file and send `X-AIworker-Capability`; a request cannot use both modes. API requests validate exact Host, Origin and Fetch Metadata, JSON writes require `application/json`, and capability-bearing local clients never follow HTTP redirects. Health exposes only non-secret identity fields (PID, port, project root, project `.orch` runtime root, version and persistent state). A live daemon record without a capability is unknown and cannot be reused, stopped, killed or overwritten; a dead PID is stale and may be replaced. Daemon record claim and cleanup use one short advisory lock so concurrent startup cannot overwrite another live record. The launcher has no direct signal fallback for an unavailable shutdown endpoint, and it unloads a loaded LaunchAgent without a live record only after the same setup transaction has just stopped a verified idle daemon.
 
 The accepted v0.1 threat boundary trusts local processes that can issue arbitrary raw loopback HTTP. Browser cookies are host-scoped rather than port-scoped, so the cookie gate is a hostile-browser-origin and CSRF control, not isolation from another local process that can observe `127.0.0.1` cookies. CLI/launcher capability checks still prevent accidental or unrelated service reuse. Protecting against hostile local processes would require a different browser bootstrap or IPC boundary and is not claimed.
+
+## D034 — Make run completion evidence-gated and restart recovery fail closed
+
+Status:
+
+Accepted
+
+Reason:
+
+An external process can exit while artifact collection, persistence, event delivery, or browser notification is still in progress. A daemon restart also cannot safely reconstruct a live `ManagedProcess` from a record alone. Treating a button click, an exit code, or a reused PID as completion would either misreport evidence or signal an unrelated process.
+
+Consequences:
+
+When the owned process wait returns, the daemon first persists exit code, stop outcome, unavailable cost, and `incomplete`. It then collects `diff.patch` and `files.json`; a natural exit with code 0 also requires a readable `last-message.md`. Only after those artifacts and the terminal record/event are available can the status become `succeeded`, `failed`, `stopped`, or `stopped_forced`. Any lifecycle persistence, evidence, event, or broadcast failure leaves a terminal/incomplete record; a process that survives cleanup keeps its handle as an active blocker until it exits.
+
+The daemon never reattaches a run after restart. It reconciles only records marked `starting`, `running`, or `stopping`, and signals an exact survivor after matching a positive PID, `psutil` creation time, and POSIX process group (or the Windows process tree). It sends TERM, then KILL only after rechecking identity and a bounded wait. Missing identity, PID reuse, an exited process, or a survivor that remains after KILL is recorded as user-visible `incomplete`; the last case blocks startup rather than exposing an unsafe recovery API. Shutdown uses the same bounded survivor rule and retains daemon identity when a process remains alive.
