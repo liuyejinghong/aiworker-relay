@@ -48,8 +48,10 @@ def _endpoint_from_record(record: dict[str, Any]) -> str | None:
     port = record.get("port")
     if (
         not isinstance(pid, int)
+        or isinstance(pid, bool)
         or pid <= 0
         or not isinstance(port, int)
+        or isinstance(port, bool)
         or not 1 <= port <= 65535
     ):
         return None
@@ -120,8 +122,10 @@ def _record_expected(
     capability = record.get("capability")
     if (
         not isinstance(pid, int)
+        or isinstance(pid, bool)
         or pid <= 0
         or not isinstance(port, int)
+        or isinstance(port, bool)
         or not 1 <= port <= 65535
         or not isinstance(recorded_project_root, str)
         or not recorded_project_root

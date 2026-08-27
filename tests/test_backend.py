@@ -41,6 +41,28 @@ from orchestrator.worktree import create_worktree
 
 
 class ProfileAndPacketTests(unittest.TestCase):
+    def test_cli_rejects_boolean_daemon_pid_and_port(self) -> None:
+        project_root = Path.cwd().resolve()
+        record = {
+            "pid": 1,
+            "port": 49178,
+            "project_root": str(project_root),
+            "runtime_root": str(project_root / ".orch"),
+            "version": __version__,
+            "persistent": True,
+            "capability": "test-capability",
+        }
+        for field in ("pid", "port"):
+            malformed = {**record, field: True}
+            with patch("orchestrator.cli.os.kill") as kill:
+                self.assertIsNone(orchestrator_cli._endpoint_from_record(malformed))
+            kill.assert_not_called()
+            self.assertIsNone(
+                orchestrator_cli._record_expected(
+                    malformed, project_root, expected_persistent=True
+                )
+            )
+
     def test_cli_loopback_opener_disables_redirects(self) -> None:
         opener = MagicMock()
         with patch(
