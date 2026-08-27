@@ -47,6 +47,7 @@
     running: "运行中",
     starting: "启动中",
     stopping: "结束中",
+    incomplete: "证据不完整",
     succeeded: "已完成",
     failed: "失败",
     stopped: "已停止",
@@ -145,6 +146,13 @@
   function runRow(r) {
     return `<div class="list-row"><div><h3 class="row-title"><a class="text-link" href="run.html?id=${encodeURIComponent(r.run_id)}">${esc(r.model)}</a></h3><div class="row-meta"><span>${esc(r.reasoning_effort || "auto")}</span><span>${esc(r.run_id.slice(0, 10))}</span>${status(r.status)}</div></div><span class="row-time">${fmtDate(r.updated_at)}</span></div>`;
   }
+  function activeRunIds(o) {
+    return new Set(
+      Array.isArray(o.active_run_ids)
+        ? o.active_run_ids.map((id) => String(id))
+        : [],
+    );
+  }
   function overviewNextStep(profiles, keyStatus) {
     if (!profiles.length) {
       return `<aside class="quiet-card"><h2>添加第一个 Worker</h2><p>先粘贴模型名并确认目录信息。连接 OpenRouter 可以随后完成。</p><a class="button" href="add-worker.html">添加 Worker</a></aside>`;
@@ -165,9 +173,8 @@
   }
   async function renderOverview(o) {
     const keyStatus = await readOpenRouterKeyStatus();
-    const active = (o.runs || []).filter((r) =>
-      ["starting", "running", "stopping"].includes(r.status),
-    );
+    const activeIds = activeRunIds(o);
+    const active = (o.runs || []).filter((r) => activeIds.has(r.run_id));
     const profileCards = o.profiles.length
       ? o.profiles
           .slice(0, 2)
@@ -201,13 +208,12 @@
         .querySelectorAll("[data-run-filter]")
         .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       const mode = b.dataset.runFilter;
+      const activeIds = activeRunIds(o);
       const rs = o.runs.filter(
         (r) =>
           mode === "all" ||
-          (mode === "active" &&
-            ["starting", "running", "stopping"].includes(r.status)) ||
-          (mode === "done" &&
-            !["starting", "running", "stopping"].includes(r.status)),
+          (mode === "active" && activeIds.has(r.run_id)) ||
+          (mode === "done" && !activeIds.has(r.run_id)),
       );
       $("#run-list").innerHTML = runTable(rs);
     });
@@ -231,7 +237,7 @@
   }
 
   function renderUsage(o) {
-    const active = o.runs.filter((r) => r.status === "running").length;
+    const active = activeRunIds(o).size;
     $("#content").innerHTML =
       `<section class="section"><div class="metric-grid"><div class="metric"><span class="metric-label">本月实际费用</span><strong class="metric-value">待归因</strong><span class="metric-foot">尚未建立可靠费用关联</span></div><div class="metric"><span class="metric-label">已记录运行</span><strong class="metric-value">${o.runs.length}</strong><span class="metric-foot">本地证据记录</span></div><div class="metric"><span class="metric-label">实时活跃</span><strong class="metric-value">${active}</strong><span class="metric-foot">外部进程</span></div></div></section><section class="section grid-two">${card("OpenRouter 账户", '<div id="account-result" class="empty"><strong>账户信息尚未读取</strong><span>只在你点击时读取。当前保存的 Key 具有管理权限时显示账户总额；否则只显示 OpenRouter 返回的当前 Key 限额。</span><div style="margin-top:16px"><button class="button button-secondary button-small" data-load-account>刷新账户信息</button></div></div>')}${card("费用口径", `<p>目录价格只用于比较模型，不代表本地实际花费。当前运行的实际费用状态为“待归因”或“暂不可用”，不会用估算值替代。</p>`)}</section><section class="section">${card("按 Worker 查看", o.profiles.length ? `<div class="list-card">${o.profiles.map((p) => `<div class="list-row"><div><strong>${esc(p.display_name || p.model)}</strong><div class="row-meta">${esc(p.model)}</div></div><span class="row-time">待归因</span></div>`).join("")}</div>` : `<div class="empty">添加 Worker 后，这里会按档案汇总。</div>`)}</section>`;
   }
@@ -537,7 +543,7 @@
         '<section class="section card empty"><strong>找不到这条运行记录</strong><a class="text-link" href="runs.html">返回运行记录</a></section>';
       return;
     }
-    const active = ["starting", "running", "stopping"].includes(r.status);
+    const active = activeRunIds(o).has(r.run_id);
     const awaitingForce = r.stop_outcome === "awaiting_force";
     $("#content").innerHTML =
       `<section class="section detail-layout"><div class="card run-detail"><div>${status(r.status)}</div><h2 class="run-title">${esc(r.model)}</h2><p class="run-subtitle">${esc(r.run_id)}</p><div class="run-actions">${awaitingForce ? `<button class="button button-danger" data-force-run="${esc(r.run_id)}">确认强制终止</button>` : active ? `<button class="button button-danger" data-stop-run="${esc(r.run_id)}">温和停止</button>` : ""}<a class="button button-secondary" href="runs.html">返回记录</a></div></div><aside class="card profile-card"><h2>运行信息</h2>${[

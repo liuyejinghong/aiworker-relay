@@ -176,6 +176,7 @@ stateDiagram-v2
     Stopping --> ForceRequested: 仍存活且用户确认
     ForceRequested --> StoppedForced: KILL 后确认退出
     Running --> Failed: 启动或 provider 失败
+    Running --> Incomplete: 进程退出但证据或持久化不完整
 ```
 
 本机已验证：一个独立进程组收到 TERM 可以正常退出；忽略 TERM 的受控进程仍存活，随后收到 KILL 后以退出码 137 终止。产品实现必须把这个结果写入 run 记录，而不是只记录按钮点击。

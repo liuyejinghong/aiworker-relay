@@ -64,7 +64,7 @@ Codex Marketplace / Plugin UI
                │      └─ 不更新、不杀进程；明确报告“更新等待当前任务结束”
                │
                └─ 没有活跃 external run
-                      └─ 受控替换 runtime → 启动固定持久 daemon → 健康检查通过 → 打开看板
+                      └─ 受控替换 runtime → 启动固定持久 daemon → 恢复旧 run 记录 → 健康检查通过 → 打开看板
 ```
 
 `setup` 是唯一自动执行 runtime 更新的入口，因为它已是用户明确授权的本机安装动作。`dispatch` 不触发隐式升级：若发现 bundle/runtime 不一致，或 daemon 不是固定持久入口，它应提示用户先运行 setup。这样一次可能下载依赖、替换 venv 的操作不会隐藏在一次任务派发中。
@@ -81,6 +81,8 @@ Codex Marketplace / Plugin UI
 | `update_deferred_active_run` | 受健康检查确认的 daemon 有 `starting`、`running` 或 `stopping` external run | 保留原 runtime 与进程；报告需在 run 结束后重新 setup |
 | `update_blocked_unknown_daemon` | daemon PID 存在，但 health / overview 与记录不一致或无法确认活跃状态 | 不替换 runtime；报告恢复阻塞，避免误杀未知进程 |
 | 更新失败后已恢复 | 新 runtime 未通过安装、version 或 health 检查，旧 runtime 已恢复 | setup 明确报告恢复结果与失败原因 |
+
+启动恢复只处理证据记录，不重新接管旧的 `ManagedProcess`。`starting`、`running` 或 `stopping` 记录只有在 PID、`psutil` 创建时间和 POSIX 进程组（Windows 进程树）都精确匹配时才允许 TERM；超时后再次确认身份才允许 KILL。身份缺失、PID 复用、进程已退出或仍存活都留下 `incomplete` 与恢复原因；若本次 daemon 关闭时 survivor 仍在运行，则保留 daemon 身份和阻塞记录，避免把旧记录永久当作已安全退出。
 
 “活跃”只指由 `external-workersd` 实际拥有的 external run。原生 Codex worker 不属于本机进程监管边界，因此不会被本更新流程停止或作为 update blocker。
 

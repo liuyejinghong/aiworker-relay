@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 import truststore
+import psutil
 
 from orchestrator import __version__
 from orchestrator import cli as orchestrator_cli
@@ -35,7 +37,7 @@ from orchestrator.daemon import (
     validate_openrouter_key,
 )
 from orchestrator.models import Profile, RunRecord, TaskPacket, utc_now
-from orchestrator.runner import start_codex_run, start_process
+from orchestrator.runner import ManagedProcess, ProcessControlError, start_codex_run, start_process
 from orchestrator.tasks import PacketValidationError, parse_packet
 from orchestrator.worktree import create_worktree
 
@@ -369,6 +371,142 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
         finally:
             if process.is_running():
                 await process.stop(force=True, grace_seconds=0.5)
+
+    async def test_kill_timeout_does_not_wait_on_live_child_pipes(self) -> None:
+        class RootProcess:
+            pid = 4242
+            returncode: int | None = None
+            stdout = None
+            stderr = None
+
+            async def wait(self) -> int:
+                await asyncio.Event().wait()
+                return 0
+
+        with patch("orchestrator.runner.os.getpgid", return_value=7000):
+            managed = ManagedProcess(RootProcess())
+        pipe_reader = asyncio.create_task(asyncio.Event().wait())
+        managed._stdout_task = pipe_reader
+        managed.term_requested = True
+        try:
+            with (
+                patch.object(managed, "is_running", return_value=True),
+                patch.object(managed, "_send_kill"),
+                patch.object(managed, "_wait_gracefully", new=AsyncMock(return_value=False)),
+            ):
+                outcome = await asyncio.wait_for(
+                    managed.stop(force=True, grace_seconds=0), timeout=0.2
+                )
+            self.assertEqual(outcome.state, "kill_timeout")
+            self.assertIs(managed._stdout_task, pipe_reader)
+            self.assertFalse(pipe_reader.done())
+        finally:
+            pipe_reader.cancel()
+            await asyncio.gather(pipe_reader, return_exceptions=True)
+
+    async def test_posix_stop_waits_for_original_group_after_root_exit(self) -> None:
+        class RootProcess:
+            pid = 4242
+            returncode: int | None = None
+            stdout = None
+            stderr = None
+
+            async def wait(self) -> int:
+                self.returncode = 0
+                return 0
+
+        root = RootProcess()
+        group_alive = True
+        signals: list[tuple[int, int]] = []
+
+        def killpg(group: int, signum: int) -> None:
+            nonlocal group_alive
+            signals.append((group, signum))
+            if signum == signal.SIGKILL:
+                group_alive = False
+            elif signum == 0 and not group_alive:
+                raise ProcessLookupError
+
+        with (
+            patch("orchestrator.runner.os.getpgid", return_value=7000),
+            patch("orchestrator.runner.os.killpg", side_effect=killpg),
+        ):
+            managed = ManagedProcess(root)
+            first = await managed.stop(grace_seconds=0)
+            self.assertEqual(first.state, "awaiting_force")
+            self.assertTrue(managed.is_running())
+            second = await managed.stop(force=True, grace_seconds=0.2)
+
+        self.assertEqual(second.state, "killed")
+        self.assertEqual(
+            [item for item in signals if item[1] != 0],
+            [(7000, signal.SIGTERM), (7000, signal.SIGKILL)],
+        )
+
+    async def test_posix_wait_treats_transient_group_eperm_as_still_existing(self) -> None:
+        class RootProcess:
+            pid = 4242
+            returncode = 0
+            stdout = None
+            stderr = None
+
+            async def wait(self) -> int:
+                return 0
+
+        with (
+            patch("orchestrator.runner.os.getpgid", return_value=7000),
+            patch(
+                "orchestrator.runner.os.killpg",
+                side_effect=[PermissionError(1, "not permitted"), ProcessLookupError()],
+            ),
+        ):
+            managed = ManagedProcess(RootProcess())
+            self.assertEqual(await managed.wait(), 0)
+
+    async def test_windows_wait_tracks_known_child_and_surfaces_identity_error(self) -> None:
+        class RootProcess:
+            pid = 4242
+            returncode: int | None = None
+            stdout = None
+            stderr = None
+
+            async def wait(self) -> int:
+                self.returncode = 0
+                return 0
+
+        root = MagicMock()
+        child = MagicMock()
+        root.pid = 4242
+        child.pid = 4243
+        root.children.return_value = [child]
+        root.create_time.return_value = 1.0
+        child.create_time.return_value = 2.0
+        root.is_running.return_value = False
+        child.is_running.return_value = True
+        process = RootProcess()
+
+        with (
+            patch("orchestrator.runner.os.name", "nt"),
+            patch(
+                "orchestrator.runner.psutil.Process",
+                side_effect=lambda pid: root if pid == 4242 else child,
+            ),
+        ):
+            managed = ManagedProcess(process)
+            wait_task = asyncio.create_task(managed.wait())
+            await asyncio.sleep(0)
+            self.assertFalse(wait_task.done())
+            child.is_running.return_value = False
+            self.assertEqual(await wait_task, 0)
+
+            # A known child that becomes unreadable cannot be reported as a
+            # clean exit after the root has already returned.
+            process.returncode = None
+            child.is_running.return_value = True
+            child.create_time.side_effect = psutil.AccessDenied(pid=4243)
+            managed = ManagedProcess(process)
+            with self.assertRaises(ProcessControlError):
+                await managed.wait()
 
 
 class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):

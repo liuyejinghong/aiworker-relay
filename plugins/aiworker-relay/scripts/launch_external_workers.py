@@ -267,15 +267,19 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
     if overview_response is None or overview_response[0] != 200:
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon overview is unavailable")
     overview = overview_response[1]
-    if not isinstance(overview, dict) or not isinstance(overview.get("runs"), list):
+    if (
+        not isinstance(overview, dict)
+        or not isinstance(overview.get("runs"), list)
+        or not isinstance(overview.get("active_run_ids"), list)
+    ):
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon overview is invalid")
-    active_runs = tuple(
-        str(run.get("run_id"))
-        for run in overview["runs"]
-        if isinstance(run, dict)
-        and run.get("status") in {"starting", "running", "stopping"}
-        and run.get("run_id")
+    active_runs: tuple[str, ...] = tuple(
+        run_id
+        for run_id in overview["active_run_ids"]
+        if isinstance(run_id, str) and run_id
     )
+    if len(active_runs) != len(overview["active_run_ids"]):
+        return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon overview active_run_ids is invalid")
     return DaemonSnapshot(
         "active" if active_runs else "idle",
         version=str(health["version"]),

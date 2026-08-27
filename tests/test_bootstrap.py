@@ -311,7 +311,7 @@ class BootstrapSmokeTests(unittest.TestCase):
                     "_local_request",
                     side_effect=[
                         (200, {"ok": True, **{key: record[key] for key in record if key != "capability"}}),
-                        (200, {"runs": []}),
+                        (200, {"runs": [], "active_run_ids": []}),
                     ],
                 ) as request,
             ):
@@ -321,6 +321,43 @@ class BootstrapSmokeTests(unittest.TestCase):
         self.assertEqual(snapshot.capability, "test-capability")
         self.assertEqual(request.call_args_list[0].kwargs["capability"], "test-capability")
         self.assertEqual(request.call_args_list[1].kwargs["capability"], "test-capability")
+
+    def test_launcher_uses_authoritative_active_run_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            record = {
+                "pid": 123,
+                "port": 61234,
+                "project_root": str(project.resolve()),
+                "runtime_root": str(project.resolve() / ".orch"),
+                "version": "0.1.0",
+                "persistent": True,
+                "capability": "test-capability",
+            }
+            (root / "daemon.json").write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(launcher, "_process_state", return_value=True),
+                patch.object(
+                    launcher,
+                    "_local_request",
+                    side_effect=[
+                        (200, {"ok": True, **{key: record[key] for key in record if key != "capability"}}),
+                        (
+                            200,
+                            {
+                                "runs": [{"run_id": "run-1", "status": "succeeded"}],
+                                "active_run_ids": ["run-1"],
+                            },
+                        ),
+                    ],
+                ),
+            ):
+                snapshot = launcher.daemon_snapshot(root)
+
+        self.assertEqual(snapshot.state, "active")
+        self.assertEqual(snapshot.active_runs, ("run-1",))
 
     def test_launcher_never_signals_a_daemon_for_missing_shutdown_endpoint(self) -> None:
         snapshot = launcher.DaemonSnapshot(

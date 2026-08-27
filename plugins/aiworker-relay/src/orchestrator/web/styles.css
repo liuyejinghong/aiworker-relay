@@ -399,7 +399,8 @@ a {
   color: var(--blue);
 }
 .status-stopped,
-.status-failed {
+.status-failed,
+.status-incomplete {
   background: var(--red-bg);
   color: var(--red);
 }
