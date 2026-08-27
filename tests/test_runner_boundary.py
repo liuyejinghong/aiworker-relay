@@ -11,44 +11,33 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from orchestrator.runner import (
-    ProcessControlError,
-    _sensitive_host_paths,
+    _tool_path_and_read_roots,
     start_codex_run,
 )
 
 
 class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
-    def test_sensitive_paths_cover_home_project_and_source_index(self) -> None:
+    def test_tool_path_rewrites_source_entries_to_the_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            host_home = Path(temporary) / "home"
-            project_root = host_home / "Documents" / "projects" / "relay"
-            source_index = project_root / ".git" / "index"
-            source_index.parent.mkdir(parents=True)
-            host_home = host_home.resolve()
-            project_root = project_root.resolve()
-            source_index = source_index.resolve()
+            root = Path(temporary)
+            project_root = root / "source"
+            worktree = root / "worktree"
+            source_bin = project_root / "tools" / "bin"
+            worktree_bin = worktree / "tools" / "bin"
+            source_bin.mkdir(parents=True)
+            worktree_bin.mkdir(parents=True)
 
-            denials = set(
-                _sensitive_host_paths(
-                    host_home, project_root, source_index
+            with (
+                patch.dict(os.environ, {"PATH": str(source_bin)}),
+                patch("orchestrator.runner.sys.platform", "linux"),
+            ):
+                tool_path, read_roots = _tool_path_and_read_roots(
+                    project_root.resolve(), worktree.resolve()
                 )
-            )
 
-            self.assertIn(host_home / ".*", denials)
-            self.assertIn(Path("/proc"), denials)
-            self.assertIn(Path("/run/user"), denials)
-            self.assertIn(host_home / "Library" / "Keychains", denials)
-            self.assertIn(host_home / "AppData", denials)
-            self.assertIn(project_root / ".env*", denials)
-            self.assertIn(project_root / ".codex", denials)
-            self.assertIn(source_index, denials)
-
-            with self.assertRaises(ProcessControlError):
-                _sensitive_host_paths(
-                    host_home,
-                    host_home / ".hidden-project",
-                    source_index,
-                )
+            self.assertEqual(tool_path, str(worktree_bin.resolve()))
+            self.assertIn(worktree_bin.resolve(), read_roots)
+            self.assertNotIn(source_bin.resolve(), read_roots)
 
     async def test_external_run_sets_permission_profile_and_filters_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -127,25 +116,23 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config["model"], "provider/model")
         self.assertEqual(config["model_reasoning_effort"], "high")
         permissions = config["permissions"]["aiworker"]
-        self.assertEqual(permissions["extends"], ":workspace")
+        self.assertNotIn("extends", permissions)
         self.assertTrue(permissions["workspace_roots"][str(isolated_home)])
         self.assertFalse(permissions["network"]["enabled"])
+        filesystem = permissions["filesystem"]
+        self.assertEqual(filesystem[":root"], "deny")
+        self.assertEqual(filesystem[":minimal"], "read")
+        self.assertEqual(filesystem[":tmpdir"], "deny")
+        self.assertEqual(filesystem[":slash_tmp"], "deny")
         self.assertEqual(
-            permissions["filesystem"][str(Path.home().resolve() / ".*")],
+            filesystem[str(root.resolve() / "source.index")],
             "deny",
         )
-        self.assertEqual(
-            permissions["filesystem"][str(root.resolve() / ".env*")],
-            "deny",
-        )
-        self.assertEqual(
-            permissions["filesystem"][str(root.resolve() / ".codex")],
-            "deny",
-        )
-        self.assertEqual(
-            permissions["filesystem"][str(root.resolve() / "source.index")],
-            "deny",
-        )
+        self.assertEqual(filesystem[str(root.resolve())], "read")
+        workspace_rules = filesystem[":workspace_roots"]
+        self.assertEqual(workspace_rules["."], "write")
+        self.assertEqual(workspace_rules[".codex"], "read")
+        self.assertEqual(workspace_rules[".env*"], "deny")
         policy = config["shell_environment_policy"]
         self.assertEqual(policy["inherit"], "none")
         self.assertFalse(policy["ignore_default_excludes"])

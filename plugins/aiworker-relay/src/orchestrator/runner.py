@@ -9,6 +9,7 @@ import math
 import os
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -20,49 +21,54 @@ class ProcessControlError(RuntimeError):
     """A process lifecycle operation is invalid or could not be observed."""
 
 
-def _sensitive_host_paths(
-    host_home: Path, project_root: Path, source_checkout_index: Path
-) -> tuple[Path, ...]:
-    """Return stable secret paths that worker tools must never read."""
+def _tool_path_and_read_roots(
+    project_root: Path, worktree: Path
+) -> tuple[str, tuple[Path, ...]]:
+    """Keep installed tools reachable without making the host readable."""
 
-    host_home = host_home.resolve()
-    project_root = project_root.resolve()
-    try:
-        project_relative = project_root.relative_to(host_home)
-    except ValueError:
-        project_relative = None
-    if project_relative is not None and (
-        not project_relative.parts or project_relative.parts[0].startswith(".")
-    ):
-        raise ProcessControlError(
-            "external runs do not support projects below a hidden home path"
-        )
+    candidates = os.environ.get("PATH", os.defpath).split(os.pathsep)
+    if sys.platform == "darwin":
+        candidates = [
+            "/Library/Developer/CommandLineTools/usr/bin",
+            "/Applications/Xcode.app/Contents/Developer/usr/bin",
+            *candidates,
+        ]
 
-    protected_directories = (
-        host_home / "Library" / "Keychains",
-        host_home / "Library" / "Application Support" / "Codex External Workers",
-        host_home / "AppData",
-        host_home / "Documents" / "PowerShell",
-        host_home / "Documents" / "WindowsPowerShell",
-    )
-    for protected in protected_directories:
-        try:
-            project_root.relative_to(protected)
-        except ValueError:
+    path_entries: list[Path] = []
+    for value in candidates:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
             continue
-        raise ProcessControlError(
-            f"external runs do not support projects below {protected}"
-        )
+        candidate = candidate.resolve()
+        try:
+            candidate = worktree / candidate.relative_to(project_root)
+        except ValueError:
+            pass
+        if candidate.is_dir() and candidate not in path_entries:
+            path_entries.append(candidate)
 
-    return (
-        Path("/proc"),
-        Path("/run/user"),
-        host_home / ".*",
-        *protected_directories,
-        project_root / ".env*",
-        project_root / ".codex",
-        source_checkout_index.resolve(),
+    package_roots = tuple(
+        path
+        for path in (
+            Path("/opt/homebrew"),
+            Path("/usr/local"),
+            Path("/Library/Frameworks"),
+            Path("/Library/Developer/CommandLineTools"),
+            Path("/Applications/Xcode.app"),
+        )
+        if path.exists()
     )
+    read_roots: list[Path] = []
+    for entry in path_entries:
+        root = entry
+        for package_root in package_roots:
+            if entry == package_root or package_root in entry.parents:
+                root = package_root
+                break
+        if root not in read_roots:
+            read_roots.append(root)
+
+    return os.pathsep.join(str(path) for path in path_entries), tuple(read_roots)
 
 
 def _validate_run_roots(worktree: Path, git_common_dir: Path) -> None:
@@ -561,7 +567,6 @@ async def start_codex_run(
     source_checkout_index = source_checkout_index.resolve()
     run_dir = run_dir.resolve()
     code_home = code_home.resolve()
-    host_home = Path.home().resolve()
     isolated_home = run_dir / "HOME"
     isolated_tmp = isolated_home / "tmp"
     code_home.mkdir(parents=True, exist_ok=True)
@@ -571,8 +576,10 @@ async def start_codex_run(
 
     # The provider process still needs the host PATH and its OpenRouter Key,
     # but every tool process receives only this run-scoped environment.
+    tool_path, tool_read_roots = _tool_path_and_read_roots(project_root, worktree)
+    filesystem_read_roots = tuple(dict.fromkeys((*tool_read_roots, git_common_dir)))
     tool_environment = {
-        "PATH": os.environ.get("PATH", os.defpath),
+        "PATH": tool_path,
         "HOME": str(isolated_home),
         "USERPROFILE": str(isolated_home),
         "TMPDIR": str(isolated_tmp),
@@ -584,9 +591,6 @@ async def start_codex_run(
         "APPDATA": str(isolated_home / "AppData" / "Roaming"),
         "LOCALAPPDATA": str(isolated_home / "AppData" / "Local"),
     }
-    sensitive_home_paths = _sensitive_host_paths(
-        host_home, project_root, source_checkout_index
-    )
     # Keep provider and model selection inside this run's CODEX_HOME.  The
     # parent Codex config and its hooks are never copied into this directory.
     config_lines = [
@@ -602,16 +606,25 @@ async def start_codex_run(
             "",
             "[permissions.aiworker]",
             'description = "AIworker isolated write run"',
-            'extends = ":workspace"',
             "",
             "[permissions.aiworker.workspace_roots]",
             f"{json.dumps(str(isolated_home))} = true",
             "",
             "[permissions.aiworker.filesystem]",
+            '":root" = "deny"',
+            '":minimal" = "read"',
+            '":tmpdir" = "deny"',
+            '":slash_tmp" = "deny"',
             *(
-                f'{json.dumps(str(path))} = "deny"'
-                for path in sensitive_home_paths
+                f'{json.dumps(str(path))} = "read"'
+                for path in filesystem_read_roots
             ),
+            f'{json.dumps(str(source_checkout_index))} = "deny"',
+            "",
+            '[permissions.aiworker.filesystem.":workspace_roots"]',
+            '"." = "write"',
+            '".codex" = "read"',
+            '".env*" = "deny"',
             "",
             "[permissions.aiworker.network]",
             "enabled = false",

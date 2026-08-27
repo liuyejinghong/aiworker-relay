@@ -155,7 +155,7 @@ external run
 
 profile 与 run 必须分开。冻结 profile 只阻止新的 run；停止正在运行的 task 使用独立的终止流程。
 
-首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录。runner 生成独立 `CODEX_HOME` 与 run-scoped `aiworker` permission profile，隔离 HOME / TMP / XDG，关闭工具网络和 login shell，不继承宿主环境，并拒绝真实 HOME 的隐藏配置、系统凭据路径、主 checkout `.env*` / `.codex` 与 source index。项目配置层被标记为 untrusted；安全字段与用户已选 reasoning 仍由 CLI 最高优先级固定。非交互式审批只使用 `--approve-for-me`，不再同时传旧 `--sandbox`，也不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。
+首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录。runner 生成独立 `CODEX_HOME` 与不继承 `:workspace` 的 run-scoped `aiworker` permission profile：文件系统默认拒绝，仅放行最小运行时、实际工具链只读路径、linked-worktree 所需 Git metadata 只读路径、detached worktree 与隔离 HOME 写路径；source checkout index、worktree `.env*`、真实 HOME 和 source checkout 其余内容均不可读写。工具网络和 login shell 关闭，工具环境不继承宿主变量。项目配置层被标记为 untrusted；安全字段与用户已选 reasoning 仍由 CLI 最高优先级固定。非交互式审批只使用 `--approve-for-me`，不再同时传旧 `--sandbox`，也不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。
 
 固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。v0.1 不接受 task 级档位覆盖；固定 Profile 原样使用其默认档位，只有 Profile 被设为“自动”时才不固定该 run 的具体档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
 
