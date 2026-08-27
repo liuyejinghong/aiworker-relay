@@ -83,9 +83,14 @@
       )}</nav></header><main class="page"><div class="topline"><div><p class="crumb">AIworker Relay</p><h1>${title}</h1><p class="page-subtitle">${sub}</p></div><div class="top-actions" data-top-actions></div></div><div id="content"></div></main></div></div>`;
   }
   async function api(path, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    if (opts.body && !Object.keys(headers).some((k) => k.toLowerCase() === "content-type")) {
+      headers["Content-Type"] = "application/json";
+    }
     const r = await fetch(path, {
-      headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
       ...opts,
+      credentials: "same-origin",
+      headers,
     });
     const body = await r.json().catch(() => ({}));
     if (!r.ok)

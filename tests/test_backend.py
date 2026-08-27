@@ -15,14 +15,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from aiohttp.test_utils import TestClient, TestServer
 import truststore
 
+from orchestrator import __version__
+from orchestrator import cli as orchestrator_cli
 from orchestrator.config import ProfileStore, atomic_write_json, user_data_root
 from orchestrator.cli import CLIError, ensure_daemon
 from orchestrator.daemon import (
+    BROWSER_CAPABILITY_COOKIE,
+    CLI_CAPABILITY_HEADER,
     OPENROUTER_BENCHMARKS_URL,
     OPENROUTER_CREDITS_URL,
     OPENROUTER_CURRENT_KEY_URL,
     APIError,
     DaemonState,
+    _daemon_record_lock,
     _http_json,
     create_app,
     fetch_openrouter_account_summary,
@@ -36,6 +41,50 @@ from orchestrator.worktree import create_worktree
 
 
 class ProfileAndPacketTests(unittest.TestCase):
+    def test_cli_rejects_boolean_daemon_pid_and_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project_root = root / "project"
+            project_root.mkdir()
+            record = {
+                "pid": os.getpid(),
+                "port": 49178,
+                "project_root": str(project_root),
+                "runtime_root": str(project_root / ".orch"),
+                "version": __version__,
+                "persistent": True,
+                "capability": "test-capability",
+            }
+            for field in ("pid", "port"):
+                malformed = {**record, field: True}
+                atomic_write_json(root / "app-data" / "daemon.json", malformed)
+                with (
+                    patch("orchestrator.cli._process_state") as process_state,
+                    patch("orchestrator.cli.subprocess.Popen") as popen,
+                    self.assertRaisesRegex(CLIError, "unknown daemon record"),
+                ):
+                    ensure_daemon(
+                        data_dir=root / "app-data",
+                        project_root=project_root,
+                        persistent=True,
+                    )
+                process_state.assert_not_called()
+                popen.assert_not_called()
+
+    def test_cli_loopback_opener_disables_redirects(self) -> None:
+        opener = MagicMock()
+        with patch(
+            "orchestrator.cli.urllib.request.build_opener", return_value=opener
+        ) as build_opener:
+            orchestrator_cli._loopback_open("http://127.0.0.1:49178", timeout=0.1)
+
+        self.assertTrue(
+            any(
+                isinstance(handler, orchestrator_cli._NoRedirect)
+                for handler in build_opener.call_args.args
+            )
+        )
+
     def test_provider_requests_use_the_system_trust_store(self) -> None:
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"data": []}'
@@ -58,6 +107,10 @@ class ProfileAndPacketTests(unittest.TestCase):
                     "pid": os.getpid(),
                     "port": 43210,
                     "project_root": str(first_project),
+                    "runtime_root": str(first_project / ".orch"),
+                    "version": __version__,
+                    "persistent": False,
+                    "capability": "test-capability",
                 },
             )
             with patch("orchestrator.cli._health", return_value=True):
@@ -67,6 +120,27 @@ class ProfileAndPacketTests(unittest.TestCase):
                     ensure_daemon(data_dir=app_data, project_root=first_project),
                     "http://127.0.0.1:43210",
                 )
+
+    def test_cli_does_not_reuse_or_replace_a_live_legacy_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            atomic_write_json(
+                root / "app-data" / "daemon.json",
+                {
+                    "pid": os.getpid(),
+                    "port": 43210,
+                    "project_root": str(project.resolve()),
+                },
+            )
+            with (
+                patch("orchestrator.cli._process_state", return_value=True),
+                patch("orchestrator.cli.subprocess.Popen") as popen,
+            ):
+                with self.assertRaisesRegex(CLIError, "no capability"):
+                    ensure_daemon(data_dir=root / "app-data", project_root=project)
+            popen.assert_not_called()
 
     def test_key_validation_uses_the_authenticated_key_endpoint(self) -> None:
         with patch("orchestrator.daemon._http_json", return_value={"data": {}}) as call:
@@ -457,19 +531,335 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
             client = TestClient(server)
             await client.start_server()
             try:
+                response = await client.get("/")
+                self.assertEqual(response.status, 200)
+                set_cookie = response.headers["Set-Cookie"]
+                self.assertIn("HttpOnly", set_cookie)
+                self.assertIn("SameSite=Strict", set_cookie)
+                self.assertNotIn("Domain=", set_cookie)
                 self.assertEqual(server.host, "127.0.0.1")
-                response = await client.get("/api/health")
+                response = await client.get(
+                    "/api/health",
+                    headers={
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
                 self.assertEqual(response.status, 200)
                 health = await response.json()
                 self.assertTrue(health["ok"])
                 self.assertTrue(health["persistent"])
-                response = await client.get("/api/openrouter-key")
+                self.assertEqual(health["project_root"], str(Path(temporary).resolve()))
+                self.assertEqual(
+                    health["runtime_root"],
+                    str(Path(temporary).resolve() / ".orch"),
+                )
+                self.assertNotIn("capability", health)
+                response = await client.get(
+                    "/api/openrouter-key",
+                    headers={
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
                 self.assertEqual(await response.json(), {"configured": False})
                 response = await client.get("/styles.css")
                 self.assertEqual(response.status, 200)
                 self.assertEqual(await response.text(), "body {}")
             finally:
                 await client.close()
+
+    async def test_local_capability_auth_rejects_alias_and_cross_site_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            server = TestServer(create_app(state))
+            client = TestClient(server)
+            await client.start_server()
+            try:
+                response = await client.get("/api/health")
+                self.assertEqual(response.status, 401)
+
+                response = await client.get(
+                    "/api/health",
+                    headers={CLI_CAPABILITY_HEADER: state.capability},
+                )
+                self.assertEqual(response.status, 200)
+
+                origin = f"http://127.0.0.1:{server.port}"
+                response = await client.get(
+                    "/api/health",
+                    headers={
+                        CLI_CAPABILITY_HEADER: state.capability,
+                        "Host": f"localhost:{server.port}",
+                    },
+                )
+                self.assertEqual(response.status, 403)
+                self.assertEqual((await response.json())["code"], "invalid_host")
+
+                response = await client.get(
+                    "/api/health",
+                    headers={
+                        CLI_CAPABILITY_HEADER: state.capability,
+                        "Sec-Fetch-Site": "cross-site",
+                    },
+                )
+                self.assertEqual(response.status, 403)
+                self.assertEqual(
+                    (await response.json())["code"], "invalid_fetch_metadata"
+                )
+
+                response = await client.get(
+                    "/api/health",
+                    headers={
+                        CLI_CAPABILITY_HEADER: state.capability,
+                        "Sec-Fetch-Mode": "no-cors",
+                    },
+                )
+                self.assertEqual(response.status, 403)
+
+                await client.get("/")
+                response = await client.get(
+                    "/api/health",
+                    headers={CLI_CAPABILITY_HEADER: state.capability},
+                )
+                self.assertEqual(response.status, 401)
+                self.assertEqual((await response.json())["code"], "unauthorized")
+
+                response = await client.put(
+                    "/api/openrouter-key",
+                    data=json.dumps({"key": "not-used"}),
+                    headers={
+                        "Content-Type": "text/plain",
+                        "Origin": origin,
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
+                self.assertEqual(response.status, 415)
+                self.assertEqual(
+                    (await response.json())["code"], "invalid_content_type"
+                )
+            finally:
+                await client.close()
+
+    async def test_hostile_browser_requests_have_no_control_plane_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: "test-key",
+            )
+            account_fetcher = MagicMock()
+            server = TestServer(create_app(state))
+            client = TestClient(server)
+            await client.start_server()
+            try:
+                await client.get("/")
+                hostile = {
+                    "Origin": "http://attacker.example",
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Mode": "no-cors",
+                    "Sec-Fetch-Dest": "image",
+                }
+                with patch(
+                    "orchestrator.daemon.fetch_openrouter_account_summary",
+                    account_fetcher,
+                ):
+                    response = await client.get(
+                        "/api/openrouter-account", headers=hostile
+                    )
+                self.assertEqual(response.status, 403)
+                account_fetcher.assert_not_called()
+
+                response = await client.post(
+                    "/api/profiles",
+                    data="model=provider/model",
+                    headers={
+                        **hostile,
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                )
+                self.assertEqual(response.status, 403)
+                self.assertEqual(state.profiles.all(), [])
+
+                response = await client.post(
+                    "/api/shutdown",
+                    data="",
+                    headers={**hostile, "Content-Type": "text/plain"},
+                )
+                self.assertEqual(response.status, 403)
+                self.assertFalse(state._shutdown.is_set())
+            finally:
+                await client.close()
+
+    async def test_browser_cookie_is_host_only_and_write_requires_local_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            static = root / "web"
+            static.mkdir()
+            (static / "index.html").write_text("<p>index</p>", encoding="utf-8")
+            (static / "styles.css").write_text("body {}", encoding="utf-8")
+            server = TestServer(create_app(state, static_dir=static))
+            client = TestClient(server)
+            await client.start_server()
+            try:
+                response = await client.get(
+                    "/",
+                    headers={
+                        "Sec-Fetch-Site": "none",
+                        "Sec-Fetch-Mode": "navigate",
+                        "Sec-Fetch-Dest": "document",
+                    },
+                )
+                self.assertEqual(response.status, 200)
+                set_cookie = response.headers["Set-Cookie"]
+                self.assertIn(f"{BROWSER_CAPABILITY_COOKIE}=", set_cookie)
+                self.assertIn("HttpOnly", set_cookie)
+                self.assertIn("SameSite=Strict", set_cookie)
+                self.assertNotIn("Domain=", set_cookie)
+
+                response = await client.get("/styles.css")
+                self.assertEqual(response.status, 200)
+                response = await client.get("/api/health")
+                self.assertEqual(response.status, 403)
+                self.assertEqual(
+                    (await response.json())["code"], "invalid_fetch_metadata"
+                )
+                response = await client.get(
+                    "/api/health",
+                    headers={
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
+                self.assertEqual(response.status, 200)
+
+                origin = f"http://127.0.0.1:{server.port}"
+                response = await client.post(
+                    "/api/shutdown",
+                    json={},
+                    headers={
+                        "Origin": "http://evil.example",
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
+                self.assertEqual(response.status, 403)
+                self.assertEqual((await response.json())["code"], "invalid_origin")
+
+                response = await client.post(
+                    "/api/shutdown",
+                    json={},
+                    headers={
+                        "Origin": origin,
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
+                self.assertEqual(response.status, 200)
+            finally:
+                await client.close()
+
+    def test_daemon_capability_is_persisted_owner_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            state.port = 49178
+            state.write_daemon_file()
+            record = json.loads(state.app_paths.daemon_file.read_text(encoding="utf-8"))
+            self.assertEqual(record["capability"], state.capability)
+            self.assertEqual(
+                state.app_paths.daemon_file.stat().st_mode & 0o777,
+                0o600,
+            )
+            self.assertNotIn("capability", state.overview())
+
+    def test_daemon_does_not_overwrite_a_live_legacy_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            legacy = {"pid": os.getpid(), "port": 49178}
+            state.app_paths.daemon_file.write_text(json.dumps(legacy), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "active"):
+                state.write_daemon_file()
+
+            self.assertEqual(
+                json.loads(state.app_paths.daemon_file.read_text(encoding="utf-8")),
+                legacy,
+            )
+
+    def test_daemon_replaces_a_stale_record_after_pid_is_dead(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            state.app_paths.daemon_file.write_text(
+                json.dumps({"pid": 123, "port": 49178}), encoding="utf-8"
+            )
+            state.port = 49178
+
+            with patch("orchestrator.daemon.os.kill", side_effect=ProcessLookupError):
+                state.write_daemon_file()
+
+            record = json.loads(state.app_paths.daemon_file.read_text(encoding="utf-8"))
+            self.assertEqual(record["pid"], state.pid)
+            self.assertEqual(record["capability"], state.capability)
+
+    def test_daemon_record_claim_is_serialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = DaemonState(
+                data_dir=root / "app",
+                project_root=root,
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+            state.port = 49178
+            with _daemon_record_lock(state.app_paths.daemon_file):
+                with self.assertRaisesRegex(RuntimeError, "being updated"):
+                    state.write_daemon_file()
 
     async def test_persistent_daemon_has_no_idle_shutdown_timer(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -498,7 +888,18 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
             client = TestClient(server)
             await client.start_server()
             try:
-                response = await client.post("/api/shutdown", json={})
+                await client.get("/")
+                origin = f"http://127.0.0.1:{server.port}"
+                response = await client.post(
+                    "/api/shutdown",
+                    json={},
+                    headers={
+                        "Origin": origin,
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
                 self.assertEqual(response.status, 200)
                 self.assertEqual((await response.json())["status"], "shutting_down")
                 self.assertTrue(state._shutdown.is_set())
@@ -519,7 +920,18 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
             client = TestClient(server)
             await client.start_server()
             try:
-                response = await client.post("/api/shutdown", json={})
+                await client.get("/")
+                origin = f"http://127.0.0.1:{server.port}"
+                response = await client.post(
+                    "/api/shutdown",
+                    json={},
+                    headers={
+                        "Origin": origin,
+                        "Sec-Fetch-Site": "same-origin",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                    },
+                )
                 self.assertEqual(response.status, 409)
                 self.assertEqual((await response.json())["code"], "active_runs")
                 self.assertFalse(state._shutdown.is_set())
@@ -539,6 +951,7 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
             client = TestClient(server)
             await client.start_server()
             try:
+                await client.get("/")
                 with patch(
                     "orchestrator.daemon.fetch_openrouter_account_summary",
                     return_value={
@@ -546,7 +959,14 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
                         "remaining_credits": 9.5,
                     },
                 ) as account_fetcher:
-                    response = await client.get("/api/openrouter-account")
+                    response = await client.get(
+                        "/api/openrouter-account",
+                        headers={
+                            "Sec-Fetch-Site": "same-origin",
+                            "Sec-Fetch-Mode": "cors",
+                            "Sec-Fetch-Dest": "empty",
+                        },
+                    )
                     self.assertEqual(response.status, 200)
                     self.assertEqual(
                         await response.json(),
@@ -563,7 +983,14 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
                         "refreshed_at": "2026-08-25T00:00:00+00:00",
                     },
                 ) as benchmark_fetcher:
-                    response = await client.get("/api/profiles/gemini/benchmarks")
+                    response = await client.get(
+                        "/api/profiles/gemini/benchmarks",
+                        headers={
+                            "Sec-Fetch-Site": "same-origin",
+                            "Sec-Fetch-Mode": "cors",
+                            "Sec-Fetch-Dest": "empty",
+                        },
+                    )
                     self.assertEqual(response.status, 200)
                     payload = await response.json()
                     self.assertEqual(payload["profile_id"], "gemini")

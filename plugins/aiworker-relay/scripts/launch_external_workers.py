@@ -8,7 +8,6 @@ import json
 import os
 import plistlib
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -17,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 import venv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -26,10 +25,18 @@ APP_NAME = "Codex External Workers"
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 PERSISTENT_CONTROL_PORT = 49178
 LAUNCH_AGENT_LABEL = "com.aiworker.relay"
+CAPABILITY_HEADER = "X-AIworker-Capability"
 
 
 class RuntimeUpdateError(RuntimeError):
     """The app-local runtime cannot be safely reconciled."""
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never carry a local capability to a redirect target."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +51,7 @@ class DaemonSnapshot:
     reason: str | None = None
     persistent: bool = False
     project_root: str | None = None
+    capability: str | None = field(default=None, repr=False)
 
 
 def app_data_root() -> Path:
@@ -147,18 +155,26 @@ def _local_request(
     *,
     method: str = "GET",
     payload: dict[str, object] | None = None,
+    capability: str | None = None,
     timeout: float = 0.8,
 ) -> tuple[int, dict[str, Any] | None] | None:
     """Call the loopback daemon without inheriting a desktop proxy setting."""
 
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers: dict[str, str] = {}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    if capability:
+        headers[CAPABILITY_HEADER] = capability
     request = urllib.request.Request(
         f"{endpoint}{path}",
         data=data,
-        headers={"Content-Type": "application/json"} if data is not None else {},
+        headers=headers,
         method=method,
     )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect()
+    )
     try:
         with opener.open(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
@@ -187,15 +203,49 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
         return DaemonSnapshot("unknown", reason="daemon record is invalid")
     pid = record.get("pid")
     port = record.get("port")
-    if not isinstance(pid, int) or not isinstance(port, int) or not 1 <= port <= 65535:
+    if (
+        not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(port, int)
+        or isinstance(port, bool)
+        or not 1 <= port <= 65535
+    ):
         return DaemonSnapshot("unknown", reason="daemon record has no valid PID or port")
     process_state = _process_state(pid)
     if process_state is False:
         return DaemonSnapshot("stale", pid=pid)
     if process_state is None:
         return DaemonSnapshot("unknown", pid=pid, reason="daemon PID cannot be inspected")
+    capability = record.get("capability")
+    if not isinstance(capability, str) or not capability:
+        return DaemonSnapshot(
+            "unknown",
+            pid=pid,
+            reason="daemon record has no capability",
+        )
+    project_root = record.get("project_root")
+    runtime_root = record.get("runtime_root")
+    version = record.get("version")
+    persistent = record.get("persistent")
+    if (
+        not isinstance(project_root, str)
+        or not project_root
+        or not isinstance(runtime_root, str)
+        or not isinstance(version, str)
+        or not isinstance(persistent, bool)
+        or Path(runtime_root).resolve()
+        != Path(project_root).resolve() / ".orch"
+    ):
+        return DaemonSnapshot(
+            "unknown",
+            pid=pid,
+            reason="daemon record has an incomplete identity",
+        )
     endpoint = f"http://127.0.0.1:{port}"
-    health_response = _local_request(endpoint, "/api/health")
+    health_response = _local_request(
+        endpoint, "/api/health", capability=capability
+    )
     if health_response is None:
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon health is unavailable")
     health_status, health = health_response
@@ -205,10 +255,15 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
         or health.get("ok") is not True
         or health.get("pid") != pid
         or health.get("port") != port
-        or not isinstance(health.get("version"), str)
+        or health.get("project_root") != project_root
+        or health.get("runtime_root") != runtime_root
+        or health.get("version") != version
+        or health.get("persistent") != persistent
     ):
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon health does not match its record")
-    overview_response = _local_request(endpoint, "/api/overview")
+    overview_response = _local_request(
+        endpoint, "/api/overview", capability=capability
+    )
     if overview_response is None or overview_response[0] != 200:
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon overview is unavailable")
     overview = overview_response[1]
@@ -233,10 +288,9 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
             else record.get("persistent") is True
         ),
         project_root=(
-            record["project_root"]
-            if isinstance(record.get("project_root"), str)
-            else None
+            project_root
         ),
+        capability=capability,
     )
 
 
@@ -254,21 +308,20 @@ def shutdown_idle_daemon(snapshot: DaemonSnapshot) -> None:
 
     if snapshot.state != "idle" or snapshot.pid is None or snapshot.endpoint is None:
         raise RuntimeUpdateError("cannot stop a daemon whose idle state is not verified")
-    response = _local_request(snapshot.endpoint, "/api/shutdown", method="POST", payload={})
+    response = _local_request(
+        snapshot.endpoint,
+        "/api/shutdown",
+        method="POST",
+        payload={},
+        capability=snapshot.capability,
+    )
     if response is None:
         latest = daemon_snapshot(app_data_root())
         if latest.state in {"missing", "stale"}:
             return
         raise RuntimeUpdateError("idle daemon stopped responding before it could be updated")
     status, _ = response
-    if status in {404, 405}:
-        # The first release bridge targets a verified old daemon which does
-        # not yet expose the narrow shutdown endpoint.  It has no active run.
-        try:
-            os.kill(snapshot.pid, signal.SIGTERM)
-        except OSError as exc:
-            raise RuntimeUpdateError(f"could not stop the idle daemon: {exc}") from exc
-    elif status == 409:
+    if status == 409:
         raise RuntimeUpdateError("runtime update deferred because an external run is now active")
     elif status != 200:
         raise RuntimeUpdateError("idle daemon refused its controlled shutdown")
@@ -410,7 +463,7 @@ def replace_runtime() -> Path:
     return orch
 
 
-def reconcile_runtime() -> tuple[Path | None, str | None]:
+def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
     """Prepare setup without updating during a live external run."""
 
     root = app_data_root()
@@ -429,21 +482,28 @@ def reconcile_runtime() -> tuple[Path | None, str | None]:
     needs_change = runtime_needs_replace or daemon_needs_restart
     if snapshot.state == "active" and needs_change:
         run_hint = ", ".join(snapshot.active_runs) or "an external run"
-        return None, (
+        return (
+            None,
             "runtime update deferred while "
-            f"{run_hint} remains active; rerun setup after it finishes"
+            f"{run_hint} remains active; rerun setup after it finishes",
+            False,
         )
     if snapshot.state == "unknown":
         raise RuntimeUpdateError(
             f"setup is blocked because daemon state is unknown: {snapshot.reason}"
         )
-    if snapshot.state == "idle" and daemon_needs_restart:
+    stopped_verified_daemon = snapshot.state == "idle" and daemon_needs_restart
+    if stopped_verified_daemon:
         shutdown_idle_daemon(snapshot)
     if runtime_needs_replace:
-        return (replace_runtime() if runtime.exists() else install_runtime()), None
+        return (
+            replace_runtime() if runtime.exists() else install_runtime(),
+            None,
+            stopped_verified_daemon,
+        )
     if not orch.is_file():
         raise RuntimeUpdateError("local runtime is incomplete; rerun setup after resolving it")
-    return orch, None
+    return orch, None, stopped_verified_daemon
 
 
 def _validate_setup_result(expected_version: str) -> None:
@@ -620,6 +680,7 @@ def ensure_macos_persistent_entry(
     project_root: Path,
     codex_path: Path | None,
     node_path: Path | None,
+    allow_loaded_replacement: bool = False,
 ) -> None:
     """Install and start the macOS user entry without changing a live run."""
 
@@ -657,6 +718,10 @@ def ensure_macos_persistent_entry(
         text=True,
     ).returncode == 0
     if loaded:
+        if not allow_loaded_replacement:
+            raise RuntimeUpdateError(
+                "setup is blocked because the loaded LaunchAgent has no verified daemon identity"
+            )
         result = subprocess.run(
             ["launchctl", "bootout", target],
             check=False,
@@ -725,7 +790,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "setup":
             if status.get("update_status") in {"runtime_missing", "update_required"}:
                 print("aiworker-relay: preparing the local control plane...", flush=True)
-            orch, deferred = reconcile_runtime()
+            orch, deferred, stopped_verified_daemon = reconcile_runtime()
             if deferred:
                 print(f"aiworker-relay: {deferred}")
                 return 0
@@ -737,6 +802,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project_root=Path.cwd(),
                 codex_path=codex_path,
                 node_path=node_path,
+                allow_loaded_replacement=stopped_verified_daemon,
             )
             command = [
                 "setup",
