@@ -17,6 +17,7 @@ import secrets
 import signal
 import shutil
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -101,6 +102,46 @@ class APIError(Exception):
         self.code = code
         self.message = message
         self.status = status
+
+
+async def _call_callback(callback: Callable[..., Any], *args: Any) -> Any:
+    """Invoke an injected callback without running synchronous work on-loop."""
+
+    abandoned = False
+    result_holder: list[Any] = []
+    result_lock = threading.Lock()
+
+    def invoke() -> Any:
+        result = callback(*args)
+        with result_lock:
+            should_discard = abandoned
+            if not should_discard:
+                result_holder.append(result)
+        if should_discard:
+            _discard_callback_result(result)
+            return None
+        return result
+
+    callback_task = asyncio.create_task(asyncio.to_thread(invoke))
+    try:
+        result = await callback_task
+    except asyncio.CancelledError:
+        with result_lock:
+            abandoned = True
+            pending = result_holder.pop() if result_holder else None
+        if pending is not None:
+            _discard_callback_result(pending)
+        raise
+    with result_lock:
+        result_holder.clear()
+    if asyncio.iscoroutine(result):
+        return await result
+    return result
+
+
+def _discard_callback_result(result: Any) -> None:
+    if asyncio.iscoroutine(result):
+        result.close()
 
 
 def _positive_pid(value: Any) -> bool:
@@ -1298,9 +1339,7 @@ class DaemonState:
         if not model:
             raise APIError("invalid_profile", "model is required")
         try:
-            catalog = self.catalog_fetcher(model)
-            if asyncio.iscoroutine(catalog):
-                catalog = await catalog
+            catalog = await _call_callback(self.catalog_fetcher, model)
         except APIError:
             raise
         except Exception as exc:
@@ -1369,9 +1408,7 @@ class DaemonState:
         if not value.strip():
             raise APIError("invalid_key", "OpenRouter API key must not be empty")
         try:
-            valid = self.key_validator(value.strip())
-            if asyncio.iscoroutine(valid):
-                valid = await valid
+            valid = await _call_callback(self.key_validator, value.strip())
         except APIError:
             raise
         except Exception as exc:
@@ -1383,7 +1420,7 @@ class DaemonState:
         if not valid:
             raise APIError("invalid_key", "OpenRouter rejected the API key", status=400)
         try:
-            self.key_saver(value.strip())
+            await _call_callback(self.key_saver, value.strip())
         except KeyringUnavailable as exc:
             raise APIError("keyring_unavailable", str(exc), status=503) from exc
 
@@ -2143,9 +2180,7 @@ async def _account_summary(request: web.Request) -> web.Response:
 
 async def _models(request: web.Request) -> web.Response:
     query = request.query.get("query", "")
-    models = request.app[STATE_KEY].catalog_fetcher(query)
-    if asyncio.iscoroutine(models):
-        models = await models
+    models = await _call_callback(request.app[STATE_KEY].catalog_fetcher, query)
     return web.json_response({"models": models})
 
 
