@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,6 +30,7 @@ from orchestrator.daemon import (
     OPENROUTER_CURRENT_KEY_URL,
     APIError,
     DaemonState,
+    _call_callback,
     _daemon_record_lock,
     _http_json,
     create_app,
@@ -510,6 +512,159 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_sync_callback_consumes_its_late_exception(self) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        contexts: list[dict[str, object]] = []
+
+        def callback() -> None:
+            entered.set()
+            release.wait()
+            try:
+                raise RuntimeError("provider failed after cancellation")
+            finally:
+                finished.set()
+
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: contexts.append(context))
+        try:
+            callback_task = asyncio.create_task(_call_callback(callback))
+            self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+            callback_task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await callback_task
+            self.assertTrue(await asyncio.to_thread(finished.wait, 1))
+            await asyncio.sleep(0)
+            self.assertEqual(contexts, [])
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+    async def test_cancelled_sync_callback_closes_its_returned_coroutine(self) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+        returned: list[object] = []
+
+        async def result() -> None:
+            await asyncio.sleep(0)
+
+        def callback() -> object:
+            entered.set()
+            release.wait()
+            coroutine = result()
+            returned.append(coroutine)
+            return coroutine
+
+        callback_task = asyncio.create_task(_call_callback(callback))
+        self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+        callback_task.cancel()
+        release.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await callback_task
+
+        for _ in range(100):
+            if returned and returned[0].cr_frame is None:
+                break
+            await asyncio.sleep(0.001)
+        self.assertEqual(len(returned), 1)
+        self.assertIsNone(returned[0].cr_frame)
+
+    async def test_blocking_model_catalog_does_not_block_health(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            entered = threading.Event()
+            release = threading.Event()
+
+            def blocked_catalog(query: str) -> list[dict[str, object]]:
+                entered.set()
+                release.wait()
+                return []
+
+            state = DaemonState(
+                data_dir=Path(temporary) / "app",
+                project_root=Path(temporary),
+                persistent=True,
+                catalog_fetcher=blocked_catalog,
+                key_getter=lambda: None,
+            )
+            server = TestServer(create_app(state))
+            client = TestClient(server)
+            await client.start_server()
+            try:
+                models_task = asyncio.create_task(
+                    client.get(
+                        "/api/models?query=blocked",
+                        headers={CLI_CAPABILITY_HEADER: state.capability},
+                    )
+                )
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+
+                health = await asyncio.wait_for(
+                    client.get(
+                        "/api/health",
+                        headers={CLI_CAPABILITY_HEADER: state.capability},
+                    ),
+                    timeout=1,
+                )
+                self.assertEqual(health.status, 200)
+            finally:
+                release.set()
+                await models_task
+                await client.close()
+
+    async def test_profile_and_key_callbacks_run_off_loop_and_allow_async_injection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            loop_thread = threading.get_ident()
+            callback_threads: list[int] = []
+            saved: list[str] = []
+
+            def catalog(query: str) -> list[dict[str, object]]:
+                callback_threads.append(threading.get_ident())
+                return [{"id": query}]
+
+            async def async_validator(value: str) -> bool:
+                return value == "test-key"
+
+            def validator(value: str) -> bool:
+                callback_threads.append(threading.get_ident())
+                return value == "test-key"
+
+            def saver(value: str) -> None:
+                callback_threads.append(threading.get_ident())
+                saved.append(value)
+
+            state = DaemonState(
+                data_dir=Path(temporary) / "app",
+                project_root=Path(temporary),
+                catalog_fetcher=catalog,
+                key_validator=async_validator,
+                key_saver=saver,
+                key_getter=lambda: None,
+            )
+            profile = await state.create_profile({"model": "provider/model"})
+            self.assertEqual(profile.model, "provider/model")
+            await state.save_key("test-key")
+            state.key_validator = validator
+            await state.save_key("test-key")
+            self.assertEqual(saved, ["test-key", "test-key"])
+            self.assertEqual(len(callback_threads), 4)
+            self.assertTrue(all(thread_id != loop_thread for thread_id in callback_threads))
+
+            async def catalog_result() -> list[dict[str, object]]:
+                return [{"id": "provider/async-model"}]
+
+            async_state = DaemonState(
+                data_dir=Path(temporary) / "async-app",
+                project_root=Path(temporary),
+                catalog_fetcher=lambda query: catalog_result(),
+                key_getter=lambda: None,
+            )
+            async_profile = await async_state.create_profile(
+                {"model": "provider/async-model"}
+            )
+            self.assertEqual(async_profile.model, "provider/async-model")
+
     async def test_run_rejects_reasoning_override_before_packet_or_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
