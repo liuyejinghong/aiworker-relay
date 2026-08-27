@@ -35,6 +35,22 @@ def _atomic_text(path: Path, value: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def _atomic_bytes(path: Path, value: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def _atomic_json(path: Path, value: Any) -> None:
     _atomic_text(
         path, json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -80,8 +96,11 @@ class EvidenceStore:
         return path
 
     def write_diff(self, text: str) -> Path:
+        """Persist a diff decoded with UTF-8 surrogateescape losslessly."""
+
         path = self.run_dir / "diff.patch"
-        _atomic_text(path, redact_secret(text, self.secret))
+        redacted = redact_secret(text, self.secret)
+        _atomic_bytes(path, redacted.encode("utf-8", errors="surrogateescape"))
         return path
 
     def write_file_list(self, files: list[str]) -> Path:
