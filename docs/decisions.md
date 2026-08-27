@@ -176,7 +176,7 @@ Always defaulting every model to maximum effort, allowing Codex to silently lowe
 
 Consequences:
 
-The user selects a profile default only from the discovered model's supported efforts, or explicitly selects an automatic policy. Fixed defaults are passed through unchanged unless a task explicitly overrides them. Each run records its actual effort for later cost-performance comparison.
+The user selects a profile default only from the discovered model's supported efforts, or explicitly selects an automatic policy. In v0.1, fixed defaults are passed through unchanged and tasks cannot override them; an automatic Profile leaves the effort unset for Codex to choose. Each run records the configured effort and whether it came from a fixed or automatic Profile. D032 supersedes the earlier per-run override idea.
 
 ## D012 — Distribute the capability as a Codex Plugin with a core Skill
 

@@ -157,7 +157,7 @@ profile 与 run 必须分开。冻结 profile 只阻止新的 run；停止正在
 
 首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录，并使用 `--approve-for-me` 让非交互式 CLI 在 Codex 的 workspace-write 审批模式下执行工具。它不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。这个限制避免在首版实现 patch 同步和冲突处理层。
 
-固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。用户在 task 中明确指定档位时优先；只有 profile 被设为“自动”时，Codex 才能为该 run 选择模型实际支持的档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
+固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。v0.1 不接受 task 级档位覆盖；固定 Profile 原样使用其默认档位，只有 Profile 被设为“自动”时才不固定该 run 的具体档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
 
 ## 状态与停止语义
 

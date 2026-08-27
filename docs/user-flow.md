@@ -46,9 +46,9 @@ codex plugin add aiworker-relay@aiworker-relay
 
 ### 5. 像平时一样向 Codex 提任务
 
-用户仍在 Codex 中说明目标、范围和验收条件。可明确指定一个外部 profile 及推理档位，例如“用 Gemini Flash，高推理完成这个探索任务”。
+用户仍在 Codex 中说明目标、范围和验收条件，并明确指定一个外部 profile。v0.1 的 run 不接受单次推理档位；需要固定档位时，用户先在该 profile 中选择默认值。
 
-- 用户明确指定模型或档位时，该选择优先；系统只检查 profile 是否可用，不静默替换或降档。
+- 用户明确指定 profile 时，该选择优先；系统只检查 profile 是否可用，并使用该 profile 的默认推理策略，不静默替换模型或降档。
 - 用户未指定时，Codex 可以建议合适 profile，但建议不构成自动授权；用户需要接受建议或明确选择一个 profile。
 - 如果 profile 已冻结，派发被拒绝，并明确说明“该模型已冻结”。用户可以先重新启用 profile，或另选一个 worker。
 
