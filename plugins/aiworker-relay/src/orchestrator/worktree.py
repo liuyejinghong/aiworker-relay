@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,16 +90,87 @@ def changed_files(worktree: Path) -> list[str]:
     return paths
 
 
-def diff_text(worktree: Path) -> str:
-    """Collect an uncommitted binary-capable diff for evidence."""
+def _git_path(worktree: Path, name: str) -> Path:
+    value = Path(_git(worktree, "rev-parse", "--git-path", name))
+    if not value.is_absolute():
+        value = worktree / value
+    return value.resolve()
 
-    result = subprocess.run(
-        ["git", "diff", "--no-ext-diff", "--binary", "--no-color"],
-        cwd=worktree,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode:
-        raise WorktreeError(result.stderr.strip() or "git diff failed")
-    return result.stdout
+
+def _quote_alternate_object_path(path: Path) -> str:
+    """Quote one Git alternate-object path without losing legal separators."""
+
+    value = str(path).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{value}"'
+
+
+def diff_text(worktree: Path) -> str:
+    """Collect the complete uncommitted binary-capable diff for evidence.
+
+    Git's ordinary ``diff`` omits untracked files, while ``diff --cached``
+    omits unstaged edits. Build a disposable index and object directory, stage
+    the complete worktree there, and compare that snapshot to ``HEAD``. The
+    worker's real index, status, and repository object database remain intact.
+    The returned text uses UTF-8 with ``surrogateescape`` so callers can
+    re-encode it without changing non-UTF-8 or newline bytes.
+    """
+
+    worktree = worktree.resolve()
+    index_path = _git_path(worktree, "index")
+    object_path = _git_path(worktree, "objects")
+    if not index_path.is_file():
+        raise WorktreeError(f"Git index is unavailable: {index_path}")
+    if not object_path.is_dir():
+        raise WorktreeError(f"Git object directory is unavailable: {object_path}")
+
+    with tempfile.TemporaryDirectory(prefix="aiworker-relay-diff-") as temporary:
+        temporary_root = Path(temporary)
+        temporary_index = temporary_root / "index"
+        temporary_objects = temporary_root / "objects"
+        temporary_objects.mkdir()
+        shutil.copyfile(index_path, temporary_index)
+
+        environment = os.environ.copy()
+        environment["GIT_INDEX_FILE"] = str(temporary_index)
+        environment["GIT_OBJECT_DIRECTORY"] = str(temporary_objects)
+        alternates = [_quote_alternate_object_path(object_path)]
+        inherited_alternates = environment.get("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        if inherited_alternates:
+            alternates.append(inherited_alternates)
+        environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = os.pathsep.join(alternates)
+
+        staged = subprocess.run(
+            ["git", "add", "--all", "--"],
+            cwd=worktree,
+            env=environment,
+            check=False,
+            capture_output=True,
+        )
+        if staged.returncode:
+            detail = (staged.stderr or staged.stdout).decode(
+                "utf-8", errors="replace"
+            ).strip()
+            raise WorktreeError(detail or "git add for evidence failed")
+
+        result = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--binary",
+                "--no-color",
+                "HEAD",
+            ],
+            cwd=worktree,
+            env=environment,
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode:
+            detail = (result.stderr or result.stdout).decode(
+                "utf-8", errors="replace"
+            ).strip()
+            raise WorktreeError(detail or "git diff failed")
+        return result.stdout.decode("utf-8", errors="surrogateescape")
