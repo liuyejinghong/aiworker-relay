@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
+import math
 import os
 import signal
 import subprocess
@@ -67,6 +69,17 @@ class ManagedProcess:
         self._stderr_task: asyncio.Task[None] | None = None
         self._stdout_tail = ""
         self._stderr_tail = ""
+        self._stop_lock = asyncio.Lock()
+        self.process_group: int | None = None
+        self._identity_error: str | None = None
+        self._windows_targets: dict[int, float] = {}
+        if os.name == "nt":
+            self._capture_windows_tree()
+        else:
+            try:
+                self.process_group = os.getpgid(self.pid)
+            except (ProcessLookupError, OSError, ValueError) as exc:
+                self._identity_error = f"could not capture process group: {exc}"
 
     @property
     def pid(self) -> int:
@@ -77,7 +90,113 @@ class ManagedProcess:
         return self.process.returncode
 
     def is_running(self) -> bool:
-        return self.process.returncode is None
+        if os.name == "nt":
+            running, _ = self._windows_tree_state()
+        else:
+            running = self._posix_group_state()
+        return running or self._identity_error is not None
+
+    @property
+    def identity_error(self) -> str | None:
+        return self._identity_error
+
+    def _set_identity_error(self, detail: str) -> None:
+        if not self._identity_error:
+            self._identity_error = detail.strip() or "process identity could not be verified"
+
+    def _posix_group_state(self) -> bool:
+        """Return whether the captured process group still exists."""
+
+        if self.process_group is None:
+            return self.process.returncode is None
+        try:
+            os.killpg(self.process_group, 0)
+        except ProcessLookupError:
+            return False
+        except OSError as exc:
+            if exc.errno == errno.ESRCH:
+                return False
+            self._set_identity_error(f"could not inspect process group: {exc}")
+            return True
+        return True
+
+    @staticmethod
+    def _valid_start_time(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return value if math.isfinite(value) and value > 0 else None
+
+    def _capture_windows_tree(self) -> None:
+        """Capture exact root/descendant identities while the root is live."""
+
+        if os.name != "nt":
+            return
+        try:
+            root = psutil.Process(self.pid)
+        except psutil.NoSuchProcess:
+            if not self._windows_targets:
+                self._set_identity_error(
+                    "external process disappeared before its identity was captured"
+                )
+            return
+        except (psutil.AccessDenied, psutil.ZombieProcess, OSError) as exc:
+            self._set_identity_error(f"could not inspect external process: {exc}")
+            return
+        try:
+            children = root.children(recursive=True)
+        except psutil.NoSuchProcess:
+            children = []
+        except (psutil.AccessDenied, psutil.ZombieProcess, OSError) as exc:
+            self._set_identity_error(f"could not capture external process tree: {exc}")
+            return
+        for candidate in [root, *children]:
+            try:
+                started_at = self._valid_start_time(candidate.create_time())
+            except psutil.NoSuchProcess:
+                continue
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError) as exc:
+                self._set_identity_error(
+                    f"could not capture process-tree identity: {exc}"
+                )
+                continue
+            if started_at is None:
+                self._set_identity_error("process-tree member has no valid start time")
+                continue
+            self._windows_targets[candidate.pid] = started_at
+
+    def _windows_tree_state(self) -> tuple[bool, str | None]:
+        """Return live/error state for the captured exact process tree."""
+
+        if os.name != "nt":
+            return False, None
+        if self.process.returncode is None:
+            self._capture_windows_tree()
+        if self._identity_error:
+            return True, self._identity_error
+        live = False
+        for pid, expected_start in tuple(self._windows_targets.items()):
+            try:
+                process = psutil.Process(pid)
+                observed_start = self._valid_start_time(process.create_time())
+                if observed_start is None or not math.isclose(
+                    observed_start, expected_start, rel_tol=0.0, abs_tol=1e-6
+                ):
+                    self._set_identity_error(f"process-tree PID {pid} changed identity")
+                    return True, self._identity_error
+                if process.is_running():
+                    live = True
+            except psutil.NoSuchProcess:
+                continue
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError, ValueError) as exc:
+                self._set_identity_error(
+                    f"could not inspect process-tree member {pid}: {exc}"
+                )
+                return True, self._identity_error
+        return live, None
 
     @property
     def stderr_summary(self) -> str | None:
@@ -145,11 +264,14 @@ class ManagedProcess:
                 return
             self._stderr_tail = (self._stderr_tail + chunk.decode(errors="replace"))[-4096:]
 
-    async def _finish_sampling(self) -> None:
+    async def _stop_rss_sampling(self) -> None:
         if self._rss_task is not None:
             self._rss_task.cancel()
             await asyncio.gather(self._rss_task, return_exceptions=True)
             self._rss_task = None
+
+    async def _finish_sampling(self) -> None:
+        await self._stop_rss_sampling()
         if self._stdout_task is not None:
             await asyncio.gather(self._stdout_task, return_exceptions=True)
             self._stdout_task = None
@@ -159,15 +281,45 @@ class ManagedProcess:
 
     async def wait(self) -> int:
         try:
-            return await self.process.wait()
-        finally:
+            returncode = await self._wait_for_owned_exit()
+        except BaseException:
+            # A still-live child may keep the inherited pipes open.  When
+            # ownership cannot be confirmed, stop only RSS sampling and leave
+            # the pipe readers attached to the retained process handle.
+            await self._stop_rss_sampling()
+            raise
+        else:
             await self._finish_sampling()
+            return returncode
+
+    async def _wait_for_owned_exit(self) -> int:
+        returncode = await self.process.wait()
+        if not await self._wait_for_group_exit():
+            raise ProcessControlError(
+                self._identity_error or "owned process group could not be verified"
+            )
+        return returncode
+
+    async def _wait_for_group_exit(self) -> bool:
+        """Wait until the owned group/tree is gone, not only its root."""
+
+        while True:
+            if os.name == "nt":
+                running, error = self._windows_tree_state()
+            else:
+                running = self._posix_group_state()
+                error = self._identity_error
+            if error:
+                return False
+            if not running:
+                return True
+            await asyncio.sleep(0.05)
 
     async def _wait_gracefully(self, timeout: float) -> bool:
         if not self.is_running():
             return True
         try:
-            await asyncio.wait_for(self.process.wait(), timeout=max(timeout, 0.0))
+            await asyncio.wait_for(self._wait_for_owned_exit(), timeout=max(timeout, 0.0))
             return True
         except asyncio.TimeoutError:
             return False
@@ -176,41 +328,87 @@ class ManagedProcess:
         if not self.is_running():
             return
         if os.name == "nt":
-            self._signal_windows(psutil.Process.terminate)
+            self._signal_windows("terminate")
+            return
+        if self.process_group is None:
+            self._set_identity_error(
+                "cannot TERM an external process without its process group"
+            )
             return
         try:
-            os.killpg(os.getpgid(self.pid), signal.SIGTERM)
+            os.killpg(self.process_group, signal.SIGTERM)
         except ProcessLookupError:
             pass
+        except OSError as exc:
+            self._set_identity_error(f"could not TERM process group: {exc}")
 
     def _send_kill(self) -> None:
         if not self.is_running():
             return
         if os.name == "nt":
-            self._signal_windows(psutil.Process.kill)
+            self._signal_windows("kill")
+            return
+        if self.process_group is None:
+            self._set_identity_error(
+                "cannot KILL an external process without its process group"
+            )
             return
         try:
-            os.killpg(os.getpgid(self.pid), signal.SIGKILL)
+            os.killpg(self.process_group, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except OSError as exc:
+            self._set_identity_error(f"could not KILL process group: {exc}")
 
-    def _signal_windows(self, action) -> None:
-        try:
-            root = psutil.Process(self.pid)
-            children = root.children(recursive=True)
-            for child in children:
-                try:
-                    action(child)
-                except psutil.Error:
-                    pass
-            action(root)
-        except psutil.Error:
-            pass
+    def _signal_windows(self, action_name: str) -> None:
+        """Signal all currently captured exact tree members, child first."""
+
+        if self.process.returncode is None:
+            self._capture_windows_tree()
+        targets: list[psutil.Process] = []
+        for pid, expected_start in tuple(self._windows_targets.items()):
+            try:
+                process = psutil.Process(pid)
+                observed_start = self._valid_start_time(process.create_time())
+                if observed_start is None or not math.isclose(
+                    observed_start, expected_start, rel_tol=0.0, abs_tol=1e-6
+                ):
+                    self._set_identity_error(f"process-tree PID {pid} changed identity")
+                    return
+                if process.is_running():
+                    targets.append(process)
+            except psutil.NoSuchProcess:
+                continue
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError, ValueError) as exc:
+                self._set_identity_error(
+                    f"could not inspect process-tree member {pid}: {exc}"
+                )
+                return
+        for process in reversed(targets):
+            try:
+                getattr(process, action_name)()
+            except psutil.NoSuchProcess:
+                continue
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError) as exc:
+                self._set_identity_error(
+                    f"could not {action_name} process-tree member {process.pid}: {exc}"
+                )
+                return
 
     async def stop(
         self, *, force: bool = False, grace_seconds: float = 10.0
     ) -> StopOutcome:
         """TERM first; KILL is only accepted after a still-live TERM stage."""
+
+        async with self._stop_lock:
+            return await self._stop_locked(
+                force=force, grace_seconds=grace_seconds
+            )
+
+    async def _stop_locked(
+        self, *, force: bool, grace_seconds: float
+    ) -> StopOutcome:
+        """Serialize stop requests for one owned process."""
 
         if not self.is_running():
             await self._finish_sampling()
@@ -224,9 +422,10 @@ class ManagedProcess:
             self.force_requested = True
             self._send_kill()
             exited = await self._wait_gracefully(min(grace_seconds, 5.0))
-            await self._finish_sampling()
             if exited:
+                await self._finish_sampling()
                 return StopOutcome("killed", self.returncode, forced=True)
+            await self._stop_rss_sampling()
             return StopOutcome("kill_timeout", self.returncode, forced=True)
 
         self.term_requested = True

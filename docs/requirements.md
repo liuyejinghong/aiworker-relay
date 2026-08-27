@@ -25,7 +25,7 @@
 - 对冻结 profile 的新派发必须被拒绝，并明确告知用户它处于冻结状态。
 - 外部 run 需要任务隔离、可观测的本地进程、RSS 监控、结构化收敛和停止结果。
 - 停止外部 run 的顺序是温和停止、确认仍存活后再强制终止，并报告实际结果。
-- run 进程退出后先把退出码、停止结果和不可用费用写入 `incomplete` 检查点，再收集证据；只有 `diff.patch`、`files.json`，以及自然成功所需的 `last-message.md` 都可读并持久化时，才显示 `succeeded`。证据、持久化、终端事件或广播失败不得留下活跃状态或伪造成功；若进程在清理后仍存活，必须保留进程句柄作为阻塞事实。
+- run 进程退出后先把退出码、停止结果和不可用费用写入 `incomplete` 检查点，再收集证据；只有 `diff.patch`、`files.json`，以及自然成功所需的 `last-message.md` 都可读并持久化时，才显示 `succeeded`。append-only 的 `run.finished` 先记录仍为 `incomplete` 的检查点及候选结果，最终状态只由随后一次 `run.json` 原子写入提交，避免事件先于记录宣称成功。证据、持久化或终端事件失败必须保持 `incomplete`；终端 SSE 广播只是实时提示，失败不得降级已经持久化的最终结果，也不得留下活跃状态或伪造成功；若进程在清理后仍存活，必须保留进程句柄作为阻塞事实。
 - daemon 重启不重新接管旧进程。对磁盘中的 `starting` / `running` / `stopping` 记录，只有正整数 PID、`psutil` 创建时间和 POSIX 进程组（Windows 进程树）完全匹配时才发送 TERM，超时再发送 KILL；身份缺失、PID 复用、进程不存在或 KILL 后仍存活均记录为用户可见的 `incomplete`，不得向不确定进程发信号。
 - 外部 worker 需要单 run、日、月的 usage / cost 视图和预算告警。
 - OpenRouter 账户余额与当前 API Key 的限额是独立的 provider 事实：只在用户从 Web 主动刷新时读取，明确区分管理 Key 可读的账户总额、普通 Key 可读的自身限额，以及尚未建立的 per-run 实际费用归因。

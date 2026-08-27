@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 import tempfile
 import unittest
@@ -205,9 +206,11 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 patch("orchestrator.daemon.psutil.Process") as process_probe,
                 patch("orchestrator.daemon.os.getpgid", return_value=process.pid),
                 patch("orchestrator.daemon.diff_text", return_value=""),
-                patch(
-                    "orchestrator.daemon.changed_files",
-                    side_effect=OSError("file list unavailable"),
+                patch("orchestrator.daemon.changed_files", return_value=[]),
+                patch.object(
+                    state._evidence[record.run_id],
+                    "write_file_list",
+                    side_effect=OSError("files write unavailable"),
                 ),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
@@ -281,9 +284,72 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ):
                     await self._execute_success(state, record)
 
-                self.assertEqual(record.status, "incomplete")
+                expected_status = "succeeded" if failure_kind == "broadcast" else "incomplete"
+                self.assertEqual(record.status, expected_status)
+                if failure_kind == "broadcast":
+                    durable = json.loads(
+                        (state.runs_root / record.run_id / "run.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    self.assertEqual(durable["status"], "succeeded")
                 self.assertNotIn(record.run_id, state._processes)
                 self.assertNotIn(record.run_id, state._tasks)
+
+    async def test_terminal_event_and_persist_failure_keeps_disk_checkpoint_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state, record = self._state_and_record(root)
+            checkpoint_writes = 0
+            original_persist = state._persist
+
+            def persist(value: RunRecord) -> None:
+                nonlocal checkpoint_writes
+                if value.exit_code == 0:
+                    checkpoint_writes += 1
+                    if checkpoint_writes > 1:
+                        raise OSError("terminal run record unavailable")
+                original_persist(value)
+
+            original_event = state._evidence[record.run_id].event
+
+            def event(value: str, **data: object) -> None:
+                if value == "run.finished":
+                    raise OSError("terminal event unavailable")
+                original_event(value, **data)
+
+            with (
+                patch.object(state, "_persist", side_effect=persist),
+                patch.object(state._evidence[record.run_id], "event", side_effect=event),
+            ):
+                await self._execute_success(state, record)
+
+            durable = json.loads(
+                (state.runs_root / record.run_id / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(record.status, "incomplete")
+            self.assertEqual(durable["status"], "incomplete")
+            self.assertIn("terminal event", record.error or "")
+            self.assertIn("terminal run record", record.error or "")
+            self.assertNotIn(record.run_id, state._processes)
+            self.assertNotIn(record.run_id, state._tasks)
+
+    async def test_terminal_event_never_claims_uncommitted_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state, record = self._state_and_record(root)
+            await self._execute_success(state, record)
+
+            events = [
+                json.loads(line)
+                for line in (state.runs_root / record.run_id / "events.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            finished = [event for event in events if event["event"] == "run.finished"][-1]
+            self.assertEqual(finished["status"], "incomplete")
+            self.assertEqual(finished["candidate_status"], "succeeded")
+            self.assertEqual(record.status, "succeeded")
 
     async def test_already_exited_stop_does_not_rewind_to_stopping(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -296,6 +362,55 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(result, record)
             self.assertEqual(record.status, "incomplete")
             self.assertEqual(process.stop_calls, [])
+
+    async def test_starting_stop_records_pending_without_awaiting_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state, record = self._state_and_record(Path(temporary), status="created")
+            release = asyncio.Event()
+
+            async def pending_run() -> None:
+                await release.wait()
+
+            task = asyncio.create_task(pending_run())
+            state._tasks[record.run_id] = task
+
+            result = await asyncio.wait_for(
+                state.stop_run(record.run_id, force=False), timeout=0.2
+            )
+
+            self.assertIs(result, record)
+            self.assertEqual(record.status, "stopping")
+            self.assertEqual(record.stop_outcome, "stop_pending")
+            self.assertFalse(task.done())
+            with self.assertRaisesRegex(APIError, "force stop"):
+                await state.stop_run(record.run_id, force=True)
+
+            release.set()
+            await task
+            state._tasks.pop(record.run_id, None)
+
+    async def test_shutdown_retries_after_pending_process_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state, record = self._state_and_record(Path(temporary), status="created")
+            process = ShutdownProcess()
+            state._shutdown.set()
+
+            async def pending_run() -> None:
+                await asyncio.sleep(0)
+                state._processes[record.run_id] = process  # type: ignore[assignment]
+                state._lifecycle_changed.set()
+
+            task = asyncio.create_task(pending_run())
+            state._tasks[record.run_id] = task
+
+            await asyncio.wait_for(
+                _serve_until_clean_shutdown(state, grace_seconds=0), timeout=0.2
+            )
+
+            self.assertEqual(record.status, "stopping")
+            self.assertEqual(process.stop_calls, [False, True])
+            self.assertNotIn(record.run_id, state._processes)
+            self.assertTrue(task.done())
 
     async def test_shutdown_terms_then_kills_and_awaits_finalization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -349,6 +464,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(task.cancelled())
             self.assertFalse(finalized)
             self.assertIn(record.run_id, state.active_run_ids())
+            self.assertIn(record.run_id, state.overview()["active_run_ids"])
             with self.assertRaisesRegex(APIError, "active"):
                 state.request_idle_shutdown()
 
@@ -384,23 +500,25 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(calls, 2)
 
-    async def test_lifecycle_error_survivor_keeps_process_handle(self) -> None:
+    async def test_durable_lifecycle_error_survivor_keeps_process_handle(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             state, record = self._state_and_record(root)
             process = ShutdownProcess(kill_timeout=True)
             packet = TaskPacket(record.run_id, {}, "# Task Packet\n")
 
-            async def broadcast(event: str, **data: object) -> None:
-                run = data.get("run")
-                if event == "run.updated" and isinstance(run, dict) and run.get("status") == "running":
-                    raise OSError("broadcast unavailable")
+            original_event = state._evidence[record.run_id].event
+
+            def event(name: str, **data: object) -> None:
+                if name == "run.started":
+                    raise OSError("event unavailable")
+                original_event(name, **data)
 
             with (
                 patch("orchestrator.daemon.start_codex_run", new=AsyncMock(return_value=process)),
                 patch("orchestrator.daemon.psutil.Process") as process_probe,
                 patch("orchestrator.daemon.os.getpgid", return_value=process.pid),
-                patch.object(state, "broadcast", side_effect=broadcast),
+                patch.object(state._evidence[record.run_id], "event", side_effect=event),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
                 await state._execute_run(record, packet, "test-key", root / "worktree")
@@ -419,6 +537,23 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(stopped, record)
             self.assertEqual(record.status, "incomplete")
             self.assertNotIn(record.run_id, state._processes)
+
+    async def test_all_run_broadcast_failures_are_non_authoritative(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state, record = self._state_and_record(Path(temporary))
+
+            with patch.object(
+                state, "broadcast", new=AsyncMock(side_effect=OSError("broadcast unavailable"))
+            ):
+                await self._execute_success(state, record)
+
+            self.assertEqual(record.status, "succeeded")
+            durable = json.loads(
+                (state.runs_root / record.run_id / "run.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(durable["status"], "succeeded")
 
     async def test_incomplete_during_wait_is_not_promoted_after_later_exit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -490,11 +625,15 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                         (None, "process_not_running"),
                     ],
                 ),
-                patch("orchestrator.daemon.os.killpg") as killpg,
+                patch(
+                    "orchestrator.daemon.os.killpg",
+                    side_effect=[None, ProcessLookupError()],
+                ) as killpg,
             ):
                 await state.reconcile_records(grace_seconds=0)
 
-            killpg.assert_called_once_with(4242, signal.SIGTERM)
+            self.assertEqual(killpg.call_args_list[0].args, (4242, signal.SIGTERM))
+            self.assertEqual(killpg.call_args_list[1].args, (4242, 0))
             self.assertEqual(record.status, "incomplete")
             self.assertEqual(record.stop_outcome, "recovery_term_exited")
             self.assertEqual(state.active_run_ids(), ())
@@ -524,6 +663,17 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             process.assert_not_called()
             self.assertEqual(record.status, "incomplete")
             self.assertIn("no valid process identity", record.error or "")
+            self.assertEqual(state.active_run_ids(), ())
+
+    async def test_restart_created_record_becomes_ownership_lost(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state, record = self._state_and_record(Path(temporary), status="created")
+
+            await state.reconcile_records(grace_seconds=0)
+
+            self.assertEqual(record.status, "incomplete")
+            self.assertEqual(record.stop_outcome, "recovery_ownership_lost")
+            self.assertIn("only created", record.error or "")
             self.assertEqual(state.active_run_ids(), ())
 
     def test_invalid_process_start_value_is_ownership_lost(self) -> None:

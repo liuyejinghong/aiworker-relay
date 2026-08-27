@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import json
 import math
 import os
@@ -191,6 +192,24 @@ def _recovery_error(reason: str | None) -> str:
         "process_identity_unavailable": "the persisted process identity could not be read",
     }
     return details.get(reason or "", "the persisted process identity could not be verified")
+
+
+def _process_group_state(record: RunRecord) -> tuple[bool, str | None]:
+    """Check the original POSIX group after the root process disappears."""
+
+    if os.name == "nt":
+        return False, None
+    if not _positive_pid(record.process_group):
+        return False, "missing_process_group"
+    try:
+        os.killpg(record.process_group, 0)
+    except ProcessLookupError:
+        return False, "process_not_found"
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return False, "process_not_found"
+        return True, "process_identity_unavailable"
+    return True, None
 
 
 @contextmanager
@@ -623,6 +642,7 @@ class DaemonState:
         self._sse_clients = 0
         self._last_activity = time.monotonic()
         self._shutdown = asyncio.Event()
+        self._lifecycle_changed = asyncio.Event()
         self.pid = os.getpid()
         self.port: int | None = None
         self.persistent = persistent
@@ -780,10 +800,6 @@ class DaemonState:
             self._append_error(
                 record, f"could not broadcast incomplete state: {broadcast_error}"
             )
-        # Make errors discovered while emitting the incomplete result durable
-        # when the evidence store is still writable.  A failure here is
-        # intentionally left in memory; the status is already terminal.
-        self._try_persist(record)
 
     async def _record_recovery(
         self,
@@ -801,14 +817,148 @@ class DaemonState:
             event_name="run.recovered",
         )
 
+    async def _request_stop_pending(
+        self, record: RunRecord, *, reason: str
+    ) -> None:
+        """Persist a TERM request while the process handle is still starting."""
+
+        if record.status not in {"created", "starting", "running", "stopping"}:
+            return
+        already_pending = (
+            record.status == "stopping" and record.stop_outcome == "stop_pending"
+        )
+        if not already_pending:
+            record.status = "stopping"
+            record.stop_outcome = "stop_pending"
+        evidence = self._evidence[record.run_id]
+        persist_error = self._try_persist(record)
+        if persist_error:
+            self._mark_incomplete(
+                record,
+                f"could not persist pending stop request: {persist_error}",
+            )
+        if not already_pending:
+            event_error = await self._try_event(
+                evidence,
+                "stop.requested",
+                force=False,
+                pending=True,
+                reason=reason,
+            )
+            if event_error:
+                self._mark_incomplete(
+                    record, f"could not write pending stop event: {event_error}"
+                )
+            broadcast_error = await self._try_broadcast(
+                "run.updated", run=self._record_payload(record)
+            )
+            # SSE is only a live hint; a failed notification must not erase
+            # the pending stop fact or turn it into a second request.
+            if broadcast_error:
+                self._append_error(
+                    record, f"could not broadcast pending stop: {broadcast_error}"
+                )
+
+    async def _publish_stop_request(
+        self, record: RunRecord, evidence: EvidenceStore, *, force: bool
+    ) -> bool:
+        """Make a live stop request durable before signaling its process."""
+
+        if record.status in {"created", "starting", "running", "stopping"}:
+            record.status = "stopping"
+        persist_error = self._try_persist(record)
+        if persist_error:
+            self._mark_incomplete(
+                record,
+                f"could not persist stop request before signaling: {persist_error}",
+            )
+        event_error = await self._try_event(
+            evidence, "stop.requested", force=force, pending=False
+        )
+        if event_error:
+            self._mark_incomplete(
+                record, f"could not write stop request before signaling: {event_error}"
+            )
+        broadcast_error = await self._try_broadcast(
+            "run.updated", run=self._record_payload(record)
+        )
+        if broadcast_error:
+            self._append_error(
+                record, f"could not broadcast stop request: {broadcast_error}"
+            )
+        return persist_error is None and event_error is None
+
     @staticmethod
-    def _send_recovery_signal(record: RunRecord, *, force: bool) -> str | None:
+    def _capture_windows_recovery_targets(
+        root: psutil.Process,
+    ) -> tuple[list[tuple[int, float]], str | None]:
+        """Capture a verified root and its current exact descendants."""
+
+        targets: list[tuple[int, float]] = []
+        try:
+            children = root.children(recursive=True)
+        except psutil.NoSuchProcess:
+            return [], "process_not_found"
+        except (psutil.AccessDenied, psutil.ZombieProcess, OSError):
+            return [], "process_identity_unavailable"
+        for process in [root, *children]:
+            pid = getattr(process, "pid", None)
+            if not _positive_pid(pid):
+                return [], "invalid_pid"
+            try:
+                started_at = _process_start_value(process.create_time())
+            except psutil.NoSuchProcess:
+                continue
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError, ValueError):
+                return [], "process_identity_unavailable"
+            if started_at is None:
+                return [], "process_identity_unavailable"
+            targets.append((pid, started_at))
+        return targets, None
+
+    @staticmethod
+    def _windows_recovery_tree_state(
+        targets: list[tuple[int, float]],
+    ) -> tuple[bool, str | None]:
+        live = False
+        for pid, expected_start in targets:
+            try:
+                process = psutil.Process(pid)
+                observed_start = _process_start_value(process.create_time())
+                if observed_start is None or not math.isclose(
+                    observed_start, expected_start, rel_tol=0.0, abs_tol=1e-6
+                ):
+                    return True, "pid_reused"
+                if process.is_running():
+                    live = True
+            except psutil.NoSuchProcess:
+                continue
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError, ValueError):
+                return True, "process_identity_unavailable"
+        return live, None
+
+    @staticmethod
+    def _send_recovery_signal(
+        record: RunRecord,
+        *,
+        force: bool,
+        windows_targets: list[tuple[int, float]] | None = None,
+    ) -> str | None:
         """Signal an exact survivor, rechecking identity immediately first."""
 
         process, reason = _exact_survivor(record)
-        if process is None:
-            return reason
         if os.name != "nt":
+            if process is None:
+                # Once the verified root exits, the original process group is
+                # still the owned target.  This catches a surviving child and
+                # allows the forced group signal without touching a new PID.
+                if reason not in {"process_not_found", "process_not_running"}:
+                    return reason
+                group_alive, group_reason = _process_group_state(record)
+                if not group_alive:
+                    return group_reason or reason
+                if group_reason is not None:
+                    return group_reason
             signum = getattr(signal, "SIGKILL" if force else "SIGTERM", 9 if force else 15)
             try:
                 os.killpg(record.process_group, signum)  # type: ignore[arg-type]
@@ -819,6 +969,32 @@ class DaemonState:
             return None
 
         action_name = "kill" if force else "terminate"
+        if windows_targets is not None:
+            targets: list[psutil.Process] = []
+            for pid, expected_start in windows_targets:
+                try:
+                    target = psutil.Process(pid)
+                    observed_start = _process_start_value(target.create_time())
+                    if observed_start is None or not math.isclose(
+                        observed_start, expected_start, rel_tol=0.0, abs_tol=1e-6
+                    ):
+                        return "pid_reused"
+                    if target.is_running():
+                        targets.append(target)
+                except psutil.NoSuchProcess:
+                    continue
+                except (psutil.AccessDenied, psutil.ZombieProcess, OSError, ValueError):
+                    return "process_identity_unavailable"
+            for target in reversed(targets):
+                try:
+                    getattr(target, action_name)()
+                except psutil.NoSuchProcess:
+                    return "process_not_found"
+                except (psutil.AccessDenied, psutil.ZombieProcess, OSError):
+                    return "process_identity_unavailable"
+            return None
+        if process is None:
+            return reason
         try:
             children = process.children(recursive=True)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
@@ -837,12 +1013,37 @@ class DaemonState:
         return None
 
     @staticmethod
-    async def _wait_for_recovery_exit(record: RunRecord, timeout: float) -> str | None:
+    async def _wait_for_recovery_exit(
+        record: RunRecord,
+        timeout: float,
+        *,
+        windows_targets: list[tuple[int, float]] | None = None,
+    ) -> str | None:
         deadline = time.monotonic() + max(timeout, 0.0)
         while True:
-            _, reason = _exact_survivor(record)
+            if windows_targets is not None and os.name == "nt":
+                running, tree_reason = DaemonState._windows_recovery_tree_state(
+                    windows_targets
+                )
+                if tree_reason is not None:
+                    return tree_reason
+                reason = None if running else "process_not_running"
+            else:
+                _, reason = _exact_survivor(record)
             if reason is not None:
-                return reason
+                if os.name != "nt" and reason in {
+                    "process_not_found",
+                    "process_not_running",
+                }:
+                    group_alive, group_reason = _process_group_state(record)
+                    if group_alive:
+                        reason = None
+                    elif group_reason is not None:
+                        return group_reason
+                    else:
+                        return reason
+                else:
+                    return reason
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return "still_alive"
@@ -852,6 +1053,16 @@ class DaemonState:
         """Reconcile nonterminal disk records without ever reattaching them."""
 
         for record in tuple(self.records.values()):
+            if record.status == "created":
+                await self._record_recovery(
+                    record,
+                    outcome="recovery_ownership_lost",
+                    reason=(
+                        "run was only created when the daemon restarted; "
+                        "no external process or task identity was persisted"
+                    ),
+                )
+                continue
             if (
                 record.status == "incomplete"
                 and record.stop_outcome in SURVIVOR_OUTCOMES
@@ -885,7 +1096,25 @@ class DaemonState:
                 )
                 continue
 
-            term_error = self._send_recovery_signal(record, force=False)
+            windows_targets: list[tuple[int, float]] | None = None
+            if os.name == "nt":
+                windows_targets, tree_error = self._capture_windows_recovery_targets(
+                    process
+                )
+                if tree_error:
+                    await self._record_recovery(
+                        record,
+                        outcome="recovery_ownership_lost",
+                        reason=(
+                            "run survivor tree could not be captured before TERM; "
+                            f"{_recovery_error(tree_error)}, no signal was sent"
+                        ),
+                    )
+                    continue
+
+            term_error = self._send_recovery_signal(
+                record, force=False, windows_targets=windows_targets
+            )
             if term_error:
                 await self._record_recovery(
                     record,
@@ -897,7 +1126,9 @@ class DaemonState:
                 )
                 continue
 
-            exit_reason = await self._wait_for_recovery_exit(record, grace_seconds)
+            exit_reason = await self._wait_for_recovery_exit(
+                record, grace_seconds, windows_targets=windows_targets
+            )
             if exit_reason is None or exit_reason in {"process_not_found", "process_not_running"}:
                 await self._record_recovery(
                     record,
@@ -916,7 +1147,9 @@ class DaemonState:
                 )
                 continue
 
-            kill_error = self._send_recovery_signal(record, force=True)
+            kill_error = self._send_recovery_signal(
+                record, force=True, windows_targets=windows_targets
+            )
             if kill_error:
                 await self._record_recovery(
                     record,
@@ -929,7 +1162,9 @@ class DaemonState:
                 continue
 
             kill_reason = await self._wait_for_recovery_exit(
-                record, min(max(grace_seconds, 0.0), 5.0)
+                record,
+                min(max(grace_seconds, 0.0), 5.0),
+                windows_targets=windows_targets,
             )
             if kill_reason == "still_alive":
                 await self._record_recovery(
@@ -978,6 +1213,10 @@ class DaemonState:
             if record.status in {"starting", "running", "stopping"}:
                 active.append(record.run_id)
                 continue
+            task = self._tasks.get(record.run_id)
+            if task is not None and not task.done():
+                active.append(record.run_id)
+                continue
             process = self._processes.get(record.run_id)
             if process is None:
                 continue
@@ -1000,6 +1239,7 @@ class DaemonState:
                 self._profile_payload(profile) for profile in self.profiles.all()
             ],
             "runs": [self._record_payload(record) for record in records[:100]],
+            "active_run_ids": list(self.active_run_ids()),
             "native_workers": [dict(worker) for worker in NATIVE_WORKER_DECLARATIONS],
             "cost_attribution": "pending_or_unavailable",
         }
@@ -1212,11 +1452,12 @@ class DaemonState:
         evidence.write_run(record)
         evidence.event("run.created", profile_id=profile.id, model=profile.model)
         evidence.write_task_packet(packet.prompt())
-        await self.broadcast("run.created", run=self._record_payload(record))
+        await self._try_broadcast("run.created", run=self._record_payload(record))
         task = asyncio.create_task(
             self._execute_run(record, packet, api_key, worktree.path)
         )
         self._tasks[run_id] = task
+        self._lifecycle_changed.set()
         return record
 
     async def _stop_after_lifecycle_error(
@@ -1246,6 +1487,18 @@ class DaemonState:
         """
 
         survivors: set[str] = set()
+        pending: set[str] = set()
+        for run_id, task in tuple(self._tasks.items()):
+            if task.done() or run_id in self._processes:
+                continue
+            record = self.records.get(run_id)
+            if record is None:
+                continue
+            pending.add(run_id)
+            await self._request_stop_pending(
+                record, reason="daemon shutdown arrived before process registration"
+            )
+
         for run_id, process in tuple(self._processes.items()):
             try:
                 running = process.is_running()
@@ -1255,17 +1508,28 @@ class DaemonState:
                 continue
 
             stop_error: str | None = None
-            try:
-                outcome = await process.stop(
-                    force=False, grace_seconds=max(grace_seconds, 0.0)
+            record = self.records.get(run_id)
+            request_ready = True
+            if record is not None and not (
+                record.status == "stopping" and record.stop_outcome == "stop_pending"
+            ):
+                request_ready = await self._publish_stop_request(
+                    record, self._evidence[run_id], force=False
                 )
-                if outcome.state == "awaiting_force" and process.is_running():
+                if not request_ready:
+                    stop_error = "stop request could not be durably recorded"
+            if request_ready:
+                try:
                     outcome = await process.stop(
-                        force=True,
-                        grace_seconds=min(max(grace_seconds, 0.0), 5.0),
+                        force=False, grace_seconds=max(grace_seconds, 0.0)
                     )
-            except Exception as exc:
-                stop_error = str(exc) or exc.__class__.__name__
+                    if outcome.state == "awaiting_force" and process.is_running():
+                        outcome = await process.stop(
+                            force=True,
+                            grace_seconds=min(max(grace_seconds, 0.0), 5.0),
+                        )
+                except Exception as exc:
+                    stop_error = str(exc) or exc.__class__.__name__
 
             try:
                 running = process.is_running()
@@ -1293,7 +1557,7 @@ class DaemonState:
             # has not exited.  The live process handle remains the blocker.
         tasks = []
         for run_id, task in tuple(self._tasks.items()):
-            if run_id in survivors or task.done():
+            if run_id in survivors or run_id in pending or task.done():
                 continue
             tasks.append(task)
         if tasks:
@@ -1306,7 +1570,7 @@ class DaemonState:
             task = self._tasks.get(run_id)
             if not running and (task is None or task.done()):
                 self._processes.pop(run_id, None)
-        return bool(survivors)
+        return bool(survivors or pending)
 
     async def _execute_run(
         self, record: RunRecord, packet: TaskPacket, api_key: str, worktree: Path
@@ -1315,18 +1579,18 @@ class DaemonState:
         process: ManagedProcess | None = None
         sample_errors: list[str] = []
         try:
-            record.status = "starting"
+            stop_pending = record.status == "stopping" or record.stop_outcome == "stop_pending"
+            if not stop_pending:
+                record.status = "starting"
             initial_error = self._try_persist(record)
             if initial_error:
                 raise RuntimeError(f"could not persist run start: {initial_error}")
             initial_error = await self._try_event(evidence, "run.starting")
             if initial_error:
                 raise RuntimeError(f"could not write run start event: {initial_error}")
-            initial_error = await self._try_broadcast(
+            await self._try_broadcast(
                 "run.updated", run=self._record_payload(record)
             )
-            if initial_error:
-                raise RuntimeError(f"could not broadcast run start: {initial_error}")
 
             async def sample(rss: int) -> None:
                 sample_value = {"at": utc_now(), "rss_bytes": rss}
@@ -1338,11 +1602,9 @@ class DaemonState:
                 event_error = await self._try_event(evidence, "rss.sample", **sample_value)
                 if event_error:
                     errors.append(f"could not write RSS event: {event_error}")
-                broadcast_error = await self._try_broadcast(
+                await self._try_broadcast(
                     "run.rss", run_id=record.run_id, **sample_value
                 )
-                if broadcast_error:
-                    errors.append(f"could not broadcast RSS sample: {broadcast_error}")
                 sample_errors.extend(errors)
 
             if not self.codex_path:
@@ -1352,10 +1614,8 @@ class DaemonState:
                 errors.append(
                     await self._try_event(evidence, "run.unavailable", reason=record.error)
                 )
-                errors.append(
-                    await self._try_broadcast(
-                        "run.updated", run=self._record_payload(record)
-                    )
+                await self._try_broadcast(
+                    "run.updated", run=self._record_payload(record)
                 )
                 for error in errors:
                     if error:
@@ -1384,10 +1644,8 @@ class DaemonState:
                 errors.append(
                     await self._try_event(evidence, "run.unavailable", reason=record.error)
                 )
-                errors.append(
-                    await self._try_broadcast(
-                        "run.updated", run=self._record_payload(record)
-                    )
+                await self._try_broadcast(
+                    "run.updated", run=self._record_payload(record)
                 )
                 for error in errors:
                     if error:
@@ -1398,17 +1656,26 @@ class DaemonState:
                 return
 
             self._processes[record.run_id] = process
-            record.status = "running"
+            self._lifecycle_changed.set()
+            stop_pending = (
+                stop_pending
+                or record.status == "stopping"
+                or record.stop_outcome == "stop_pending"
+            )
+            if not stop_pending:
+                record.status = "running"
             record.pid = process.pid
             identity_errors: list[str] = []
             if not _positive_pid(record.pid):
                 identity_errors.append("external process returned an invalid PID")
             if os.name != "nt":
                 if _positive_pid(record.pid):
-                    try:
-                        record.process_group = os.getpgid(record.pid)
-                    except (ProcessLookupError, OSError, ValueError):
-                        record.process_group = None
+                    record.process_group = getattr(process, "process_group", None)
+                    if not _positive_pid(record.process_group):
+                        try:
+                            record.process_group = os.getpgid(record.pid)
+                        except (ProcessLookupError, OSError, ValueError):
+                            record.process_group = None
                 else:
                     record.process_group = None
                 if not _positive_pid(record.process_group):
@@ -1425,6 +1692,9 @@ class DaemonState:
                 record.process_started_at = None
             if record.process_started_at is None:
                 identity_errors.append("process start-time identity is unavailable")
+            process_identity_error = getattr(process, "identity_error", None)
+            if process_identity_error:
+                identity_errors.append(str(process_identity_error))
             started_error = self._try_persist(record)
             if started_error:
                 raise RuntimeError(f"could not persist running process: {started_error}")
@@ -1442,11 +1712,26 @@ class DaemonState:
             )
             if started_error:
                 raise RuntimeError(f"could not write run started event: {started_error}")
-            started_error = await self._try_broadcast(
+            await self._try_broadcast(
                 "run.updated", run=self._record_payload(record)
             )
-            if started_error:
-                raise RuntimeError(f"could not broadcast run start: {started_error}")
+            if stop_pending:
+                try:
+                    outcome = await process.stop(force=False)
+                except ProcessControlError as exc:
+                    raise RuntimeError(f"could not issue pending TERM: {exc}") from exc
+                record.stop_outcome = outcome.state
+                stop_error = self._try_persist(record)
+                if stop_error:
+                    raise RuntimeError(f"could not persist pending stop outcome: {stop_error}")
+                stop_error = await self._try_event(
+                    evidence, "stop.observed", outcome=asdict(outcome)
+                )
+                if stop_error:
+                    raise RuntimeError(f"could not write pending stop event: {stop_error}")
+                await self._try_broadcast(
+                    "run.updated", run=self._record_payload(record)
+                )
 
             returncode = await process.wait()
             # Shutdown/lifecycle cleanup may have marked the record incomplete
@@ -1506,38 +1791,41 @@ class DaemonState:
             all_errors = sample_errors + artifact_errors
             if all_errors:
                 self._mark_incomplete(record, "; ".join(all_errors))
-            elif incomplete_after_wait:
-                record.status = "incomplete"
-                record.cost_state = "unavailable"
-            else:
-                record.status = desired_status
+            candidate_status = (
+                "incomplete"
+                if all_errors or incomplete_after_wait
+                else desired_status
+            )
+            # The durable checkpoint remains incomplete while the append-only
+            # terminal event is written.  The event records the candidate
+            # result, not a result that has not yet been committed to run.json.
+            record.status = "incomplete"
+            record.cost_state = "unavailable"
 
-            terminal_error = self._try_persist(record)
-            if terminal_error:
-                self._mark_incomplete(
-                    record, f"could not persist terminal run record: {terminal_error}"
-                )
-                self._try_persist(record)
             event_error = await self._try_event(
                 evidence,
                 "run.finished",
                 exit_code=returncode,
                 status=record.status,
-                evidence_complete=not all_errors and record.status != "incomplete",
+                candidate_status=candidate_status,
+                evidence_complete=candidate_status != "incomplete",
             )
             if event_error:
                 self._mark_incomplete(
                     record, f"could not write terminal run event: {event_error}"
                 )
-                self._try_persist(record)
-            broadcast_error = await self._try_broadcast(
+            elif candidate_status != "incomplete":
+                record.status = candidate_status
+            terminal_error = self._try_persist(record)
+            if terminal_error:
+                # The durable post-wait checkpoint remains the source of
+                # truth.  Do not issue a compensating persist after failure.
+                self._mark_incomplete(
+                    record, f"could not persist terminal run record: {terminal_error}"
+                )
+            await self._try_broadcast(
                 "run.updated", run=self._record_payload(record)
             )
-            if broadcast_error:
-                self._mark_incomplete(
-                    record, f"could not broadcast terminal run state: {broadcast_error}"
-                )
-                self._try_persist(record)
         except Exception as exc:
             survivor = False
             if process is not None:
@@ -1572,6 +1860,7 @@ class DaemonState:
             if not still_running:
                 self._processes.pop(record.run_id, None)
             self._tasks.pop(record.run_id, None)
+            self._lifecycle_changed.set()
 
     async def stop_run(self, run_id: str, *, force: bool) -> RunRecord:
         record = self.records.get(run_id)
@@ -1581,9 +1870,25 @@ class DaemonState:
         task = self._tasks.get(run_id)
         if process is None:
             if task is not None and not task.done():
-                await task
-            if task is None or task.done():
+                if force:
+                    raise APIError(
+                        "run_not_stoppable",
+                        "force stop requires a live external process after TERM",
+                        status=409,
+                    )
+                await self._request_stop_pending(
+                    record, reason="stop requested before process registration"
+                )
+                self._lifecycle_changed.set()
+                return record
+            if task is not None:
                 self._tasks.pop(run_id, None)
+            if force:
+                raise APIError(
+                    "run_not_stoppable",
+                    "force stop requires a live external process after TERM",
+                    status=409,
+                )
             raise APIError("run_not_stoppable", "run has no live external process")
 
         try:
@@ -1592,6 +1897,12 @@ class DaemonState:
             self._append_error(record, f"could not inspect process before stop: {exc}")
             process_running = True
         if not process_running:
+            if force:
+                raise APIError(
+                    "run_not_stoppable",
+                    "force stop requires a live external process after TERM",
+                    status=409,
+                )
             if task is not None and not task.done():
                 await task
             if record.status in {"starting", "running", "stopping"} and (
@@ -1605,9 +1916,22 @@ class DaemonState:
             self._processes.pop(run_id, None)
             if task is None or task.done():
                 self._tasks.pop(run_id, None)
+            self._lifecycle_changed.set()
             return self.records[run_id]
 
         evidence = self._evidence[run_id]
+        if force and not bool(getattr(process, "term_requested", False)):
+            raise APIError(
+                "run_not_stoppable",
+                "force stop requires a prior TERM request",
+                status=409,
+            )
+        if not await self._publish_stop_request(record, evidence, force=force):
+            raise APIError(
+                "run_not_stoppable",
+                "stop request could not be durably recorded",
+                status=409,
+            )
         try:
             outcome = await process.stop(force=force)
         except ProcessControlError as exc:
@@ -1629,17 +1953,29 @@ class DaemonState:
             self._processes.pop(run_id, None)
             if task is None or task.done():
                 self._tasks.pop(run_id, None)
+            self._lifecycle_changed.set()
             return self.records[run_id]
 
-        if record.status in {"starting", "running", "stopping"} and record.status != "stopping":
-            record.status = "stopping"
-            self._try_persist(record)
-            await self._try_event(evidence, "stop.requested", force=force)
-            await self._try_broadcast("run.updated", run=self._record_payload(record))
         record.stop_outcome = outcome.state
-        self._try_persist(record)
-        await self._try_event(evidence, "stop.observed", outcome=asdict(outcome))
-        await self._try_broadcast("run.updated", run=self._record_payload(record))
+        persist_error = self._try_persist(record)
+        if persist_error:
+            self._mark_incomplete(
+                record, f"could not persist stop outcome: {persist_error}"
+            )
+        event_error = await self._try_event(
+            evidence, "stop.observed", outcome=asdict(outcome)
+        )
+        if event_error:
+            self._mark_incomplete(
+                record, f"could not write stop outcome event: {event_error}"
+            )
+        broadcast_error = await self._try_broadcast(
+            "run.updated", run=self._record_payload(record)
+        )
+        if broadcast_error:
+            self._append_error(
+                record, f"could not broadcast stop outcome: {broadcast_error}"
+            )
 
         try:
             process_running = process.is_running()
@@ -1662,6 +1998,7 @@ class DaemonState:
                     reason="stop completed without a run finalization task",
                 )
             self._processes.pop(run_id, None)
+        self._lifecycle_changed.set()
         return self.records[run_id]
 
     def request_idle_shutdown(self) -> dict[str, Any]:
@@ -1913,12 +2250,32 @@ async def _serve_until_clean_shutdown(
 ) -> None:
     """Keep the listener alive until a shutdown attempt has no survivors."""
 
+    retry_on_change = False
     while True:
-        await state._shutdown.wait()
+        if not retry_on_change:
+            await state._shutdown.wait()
+        retry_on_change = False
+        state._lifecycle_changed.clear()
         if await state.shutdown_runs(grace_seconds=grace_seconds):
             # A live external process remains an active blocker.  Clear only
-            # this attempt's trigger; a later signal can retry bounded stop.
+            # this attempt's trigger.  A process-registration/finalization
+            # change wakes the loop for an automatic bounded retry; a later
+            # signal remains sufficient for an unchanged survivor.
             state._shutdown.clear()
+            if state._lifecycle_changed.is_set():
+                continue
+            shutdown_wait = asyncio.create_task(state._shutdown.wait())
+            lifecycle_wait = asyncio.create_task(state._lifecycle_changed.wait())
+            done, pending = await asyncio.wait(
+                (shutdown_wait, lifecycle_wait),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if shutdown_wait in done and state._shutdown.is_set():
+                state._shutdown.clear()
+            retry_on_change = lifecycle_wait in done or shutdown_wait in done
             continue
         return
 
