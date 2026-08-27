@@ -228,7 +228,7 @@ An explicit user selection takes priority. When the user has not selected a prof
 
 ## D015 — Use one on-demand cross-platform local control process
 
-Status: Accepted
+Status: Superseded by D031
 
 Reason:
 
@@ -486,4 +486,22 @@ Using `--dangerously-bypass-approvals-and-sandbox`, building a second model harn
 
 Consequences:
 
-Every external run includes `--approve-for-me`. Its tools remain inside Codex's supported workspace-write approval mode and the detached worktree; the product does not claim a global sandbox bypass. A dashboard-managed successful write must still be observed before marking a Profile verified.
+Every external run includes `--approve-for-me`. Its tools remain inside Codex's supported workspace-write approval mode and the detached worktree; the product does not claim a global sandbox bypass. A dashboard-managed successful write is necessary evidence for any future Profile promotion, but the capability matrix and user-visible promotion operation remain explicit product decisions rather than automatic side effects of one run.
+
+## D031 — Keep one stable local control-plane entry
+
+Status: Accepted
+
+Reason:
+
+The prior 60-second idle exit made the dashboard URL disappear after ordinary use. A browser bookmark cannot restart a stopped HTTP process, so normal use otherwise required returning to Codex solely to reopen the page. The user needs a stable local entry without changing external-worker consent or making idle provider calls.
+
+Alternatives considered:
+
+Adding a Plugin MCP server solely for a custom Codex UI, a second proxy or watcher process, a separate desktop application, repeated idle timers, and an always-open browser client were not accepted.
+
+Consequences:
+
+The existing `external-workersd` gains a persistent mode and serves the fixed loopback address `127.0.0.1:49178`. On macOS, explicit setup writes one user-owned `com.aiworker.relay` LaunchAgent that starts this same daemon at login; it contains only local runtime, project, port, persistence, the setup-resolved absolute Codex CLI path, and a process-local minimal `PATH` for that CLI and its resolved Node runtime. It never stores an OpenRouter Key or Profile value, and does not change the user's global shell environment. The daemon has no idle provider polling, account refresh, external dispatch, or RSS sampling unless a run is active.
+
+The daemon remains bound to one project root. Setup may replace a verified idle temporary daemon to establish the fixed entry, but it defers while a run is active and blocks on unknown state; after a verified idle stop it uses the same reusable-address semantics as the `aiohttp` listener before rebinding the fixed loopback port. It never silently switches the persisted entry to another project. Windows and Linux use the same fixed persistent daemon for the current login session, while a platform-native login entry is not claimed until it is implemented and accepted.

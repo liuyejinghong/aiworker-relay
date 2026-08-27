@@ -345,12 +345,14 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
             state = DaemonState(
                 data_dir=Path(temporary) / "app",
                 project_root=Path(temporary),
+                persistent=True,
                 catalog_fetcher=lambda query: [],
                 key_getter=lambda: None,
             )
             self.assertEqual(
                 state._daemon_record()["project_root"], str(Path(temporary).resolve())
             )
+            self.assertTrue(state._daemon_record()["persistent"])
             static = Path(temporary) / "web"
             static.mkdir()
             (static / "styles.css").write_text("body {}", encoding="utf-8")
@@ -361,7 +363,9 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(server.host, "127.0.0.1")
                 response = await client.get("/api/health")
                 self.assertEqual(response.status, 200)
-                self.assertTrue((await response.json())["ok"])
+                health = await response.json()
+                self.assertTrue(health["ok"])
+                self.assertTrue(health["persistent"])
                 response = await client.get("/api/openrouter-key")
                 self.assertEqual(await response.json(), {"configured": False})
                 response = await client.get("/styles.css")
@@ -369,6 +373,20 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await response.text(), "body {}")
             finally:
                 await client.close()
+
+    async def test_persistent_daemon_has_no_idle_shutdown_timer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = DaemonState(
+                data_dir=Path(temporary) / "app",
+                project_root=Path(temporary),
+                persistent=True,
+                catalog_fetcher=lambda query: [],
+                key_getter=lambda: None,
+            )
+
+            await state.idle_loop()
+
+        self.assertFalse(state._shutdown.is_set())
 
     async def test_launcher_shutdown_only_accepts_an_idle_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

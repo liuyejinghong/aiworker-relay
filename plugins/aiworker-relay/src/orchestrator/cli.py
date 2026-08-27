@@ -57,6 +57,9 @@ def ensure_daemon(
     data_dir: Path | None = None,
     project_root: Path | None = None,
     timeout: float = 8.0,
+    port: int = 0,
+    persistent: bool = False,
+    codex_path: str | None = None,
 ) -> str:
     """Reuse a daemon only after a real health response, otherwise launch one."""
 
@@ -94,6 +97,12 @@ def ensure_daemon(
         "--project-root",
         str(requested_project_root),
     ]
+    if port:
+        command.extend(["--port", str(port)])
+    if persistent:
+        command.append("--persistent")
+    if codex_path:
+        command.extend(["--codex-path", codex_path])
     kwargs: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -164,6 +173,9 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--data-dir", type=Path, help=argparse.SUPPRESS)
     setup.add_argument("--project-root", type=Path, help=argparse.SUPPRESS)
     setup.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
+    setup.add_argument("--port", type=int, default=0, help=argparse.SUPPRESS)
+    setup.add_argument("--persistent", action="store_true", help=argparse.SUPPRESS)
+    setup.add_argument("--codex-path", help=argparse.SUPPRESS)
     dispatch = commands.add_parser(
         "dispatch", help="Dispatch a fixed Task Packet through the local daemon."
     )
@@ -177,6 +189,9 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--confirm-experimental", action="store_true")
     dispatch.add_argument("--data-dir", type=Path, help=argparse.SUPPRESS)
     dispatch.add_argument("--project-root", type=Path, help=argparse.SUPPRESS)
+    dispatch.add_argument("--port", type=int, default=0, help=argparse.SUPPRESS)
+    dispatch.add_argument("--persistent", action="store_true", help=argparse.SUPPRESS)
+    dispatch.add_argument("--codex-path", help=argparse.SUPPRESS)
     return parser
 
 
@@ -191,7 +206,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "setup":
             endpoint = ensure_daemon(
-                data_dir=args.data_dir, project_root=args.project_root
+                data_dir=args.data_dir,
+                project_root=args.project_root,
+                port=args.port,
+                persistent=args.persistent,
+                codex_path=args.codex_path,
             )
             print(endpoint)
             if not args.no_open:
@@ -199,7 +218,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "dispatch":
             endpoint = ensure_daemon(
-                data_dir=args.data_dir, project_root=args.project_root
+                data_dir=args.data_dir,
+                project_root=args.project_root,
+                port=args.port,
+                persistent=args.persistent,
+                codex_path=args.codex_path,
             )
             value = _api_post(
                 endpoint,

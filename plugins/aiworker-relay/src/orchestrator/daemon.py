@@ -297,6 +297,7 @@ class DaemonState:
         *,
         data_dir: Path | None = None,
         project_root: Path | None = None,
+        persistent: bool = False,
         catalog_fetcher: Callable[[str], list[dict[str, Any]]] | None = None,
         key_getter: Callable[[], str | None] = get_openrouter_key,
         key_saver: Callable[[str], None] = save_openrouter_key,
@@ -326,6 +327,7 @@ class DaemonState:
         self._shutdown = asyncio.Event()
         self.pid = os.getpid()
         self.port: int | None = None
+        self.persistent = persistent
         self._load_records()
 
     def _load_records(self) -> None:
@@ -356,6 +358,7 @@ class DaemonState:
             "project_root": str(self.project_root),
             "started_at": utc_now(),
             "version": __version__,
+            "persistent": self.persistent,
         }
 
     def write_daemon_file(self) -> None:
@@ -745,6 +748,8 @@ class DaemonState:
         return {"status": "shutting_down", "version": __version__}
 
     async def idle_loop(self) -> None:
+        if self.persistent:
+            return
         while not self._shutdown.is_set():
             await asyncio.sleep(1)
             if self._sse_clients == 0 and not self.active_run_ids():
@@ -766,7 +771,13 @@ def _route(handler):
 async def _health(request: web.Request) -> web.Response:
     state: DaemonState = request.app[STATE_KEY]
     return web.json_response(
-        {"ok": True, "version": __version__, "pid": state.pid, "port": state.port}
+        {
+            "ok": True,
+            "version": __version__,
+            "pid": state.pid,
+            "port": state.port,
+            "persistent": state.persistent,
+        }
     )
 
 
@@ -945,8 +956,15 @@ async def serve(
     data_dir: Path | None = None,
     project_root: Path | None = None,
     port: int = 0,
+    persistent: bool = False,
+    codex_path: str | None = None,
 ) -> int:
-    state = DaemonState(data_dir=data_dir, project_root=project_root)
+    state = DaemonState(
+        data_dir=data_dir,
+        project_root=project_root,
+        persistent=persistent,
+        codex_path=codex_path,
+    )
     app = create_app(state)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -962,12 +980,13 @@ async def serve(
                 loop.add_signal_handler(signum, state._shutdown.set)
             except (NotImplementedError, RuntimeError):
                 pass
-    idle_task = asyncio.create_task(state.idle_loop())
+    idle_task = None if persistent else asyncio.create_task(state.idle_loop())
     try:
         await state._shutdown.wait()
     finally:
-        idle_task.cancel()
-        await asyncio.gather(idle_task, return_exceptions=True)
+        if idle_task is not None:
+            idle_task.cancel()
+            await asyncio.gather(idle_task, return_exceptions=True)
         for process in tuple(state._processes.values()):
             if process.is_running():
                 try:
@@ -990,6 +1009,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--project-root", type=Path)
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--persistent", action="store_true")
+    parser.add_argument("--codex-path")
     return parser
 
 
@@ -999,7 +1020,13 @@ def main(argv: list[str] | None = None) -> int:
         build_parser().print_help()
         return 0
     return asyncio.run(
-        serve(data_dir=args.data_dir, project_root=args.project_root, port=args.port)
+        serve(
+            data_dir=args.data_dir,
+            project_root=args.project_root,
+            port=args.port,
+            persistent=args.persistent,
+            codex_path=args.codex_path,
+        )
     )
 
 

@@ -36,12 +36,12 @@
 - 每个外部 worker profile 有用户确认的默认推理策略，只能从该模型实际支持的档位中选择。任务未指定档位时，Codex 必须按固定默认值派发；用户明确指定档位优先。只有 profile 被用户设为“自动”时，Codex 才可选择档位。
 - 产品保持本地、轻量、CLI first；Web 看板是运行控制面，不是远程 SaaS。
 - 首版跨平台目标是 macOS、Windows 和具备系统密钥服务的桌面 Linux。
-- 本地控制面是单个按需 `external-workersd`：Python 3.12+、`asyncio` 与 `aiohttp`；同一进程服务本机 Web、SSE、状态 API 与外部 run 监管。一个活跃 daemon 绑定一个项目根目录；第二个项目不得静默复用它。
+- 本地控制面是单个持久 `external-workersd`：Python 3.12+、`asyncio` 与 `aiohttp`；同一进程服务本机 Web、SSE、状态 API 与外部 run 监管。它固定绑定 loopback `127.0.0.1:49178`；macOS 的 setup 将该同一进程注册为用户级 LaunchAgent。一个活跃 daemon 绑定一个项目根目录；第二个项目不得静默复用它。
 - 页面使用静态 HTML、CSS 和原生 JavaScript；状态使用 SSE 推送，用户操作使用 HTTP `POST`，不使用 React、WebSocket、Node 常驻进程或桌面壳。
 - 外部 run 用 `asyncio` 管理生命周期，`psutil` 读取 RSS 与在停止时枚举进程树。只有活跃外部 run 每 2 秒采样一次；原生 worker 不采样。
 - API Key 使用 `keyring` 写入操作系统密钥服务；密钥服务不可用时拒绝保存，不回退到明文文件。Provider HTTPS 使用操作系统证书库，不关闭 TLS 验证。
 - 用户级 Profile 使用原子 JSON；项目级 run 证据使用 `.orch/runs/` 下的 JSONL。真实费用日/月汇总在可靠归因前不生成，不引入数据库。
-- 没有浏览器客户端且没有活跃外部 run 时，`external-workersd` 在 60 秒后退出；看板打开但没有活跃 run 时不做状态采样或自动 provider 请求，账户和公开跑分只接受用户主动刷新。
+- 持久 `external-workersd` 在空闲时只维持 loopback listener，不做状态采样、自动 provider 请求或自动派发；账户和公开跑分只接受用户主动刷新。只有活跃 external run 才有 RSS 采样。
 - 目标是升级并融合进 `sol-worker-routing-codex`，不是长期维护平行路由项目。
 - 源码开发可使用 Codex local marketplace；面向其他开发者的公开 pre-release 使用 Git-backed marketplace。Plugin 包含 `aiworker-relay` Skill，不含 MCP server；2026-08-26 已在干净隔离 `CODEX_HOME` 中实测 `0.1.6 → 0.1.7 → 0.1.8` 更新与 runtime setup 收敛，并在推送后全新安装当前 `0.1.9` 后再次得到版本一致的 runtime / daemon。该事实不等同于已发布正式版本，也不替代每种 Codex Desktop UI 更新交互的验收。
 - 公开 pre-release 源码仓库是 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。仓库公开不等于任意新 bundle 已自动到达用户本机；用户获得新 bundle 后仍须显式运行 `$aiworker-relay setup`。
@@ -58,11 +58,11 @@
 
 ## 当前阶段边界
 
-本次已完成：符合 Codex marketplace source 约定的 AIworker Relay Plugin package、`aiworker-relay` Skill、应用级 bootstrap launcher、loopback `external-workersd`、Profile / Key / run API、账户与公开跑分的按需读取、静态多页 Web、隔离 worktree / `codex exec` 路径、JSONL 证据与两阶段停止代码；canonical package `VERSION`、setup-only runtime 收敛、活跃 run 更新延后、idle daemon 受控退出、更新失败恢复与 dispatch 版本不一致拒绝。
+本次已完成：符合 Codex marketplace source 约定的 AIworker Relay Plugin package、`aiworker-relay` Skill、应用级 bootstrap launcher、固定 loopback `external-workersd`、Profile / Key / run API、账户与公开跑分的按需读取、静态多页 Web、隔离 worktree / `codex exec` 路径、JSONL 证据与两阶段停止代码；canonical package `VERSION`、setup-only runtime 收敛、活跃 run 更新延后、持久控制面迁移、更新失败恢复与 dispatch 版本不一致拒绝。
 
-本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；Git-backed marketplace 的干净安装和两次更新；以及真实用户应用数据的空闲 runtime 收敛。2026-08-26 对 `nvidia/nemotron-3-ultra-550b-a55b:free` 的直接 Responses、流式 Responses 和函数调用均返回 200；相同模型的隔离 `codex exec --approve-for-me` 真实创建了限定标记文件。真实 dashboard child 也已由温和停止以 `term_exited`、退出码 0 收敛。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree、TERM → KILL、runtime 失败恢复、active update defer、错误摘要脱敏及非交互式审批参数。
+本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；Git-backed marketplace 的干净安装和两次更新；以及真实用户应用数据的空闲 runtime 收敛。2026-08-26 对 `nvidia/nemotron-3-ultra-550b-a55b:free` 的直接 Responses、流式 Responses 和函数调用均返回 200；2026-08-27 同一模型的 dashboard-managed detached run 实际创建了限定 marker，文件清单仅该路径、`git diff --check` 通过，随后在 PID / PGID 可观测和 RSS 采样期间由控制面 TERM 收敛为 `term_exited`、退出码 0。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree、TERM → KILL、runtime 失败恢复、active update defer、错误摘要脱敏及非交互式审批参数。
 
-尚未验收：修复后的 dashboard-managed NVIDIA write run 尚未在 provider 有可用免费额度时成功结束；最近一次在启动后收到 `429 Too Many Requests`，因此该 Profile 仍不能标为 verified。Ox Alpha 的实验性 write probe 仍以 provider `400 Server tool request failed` 结束。实际费用、日/月汇总、预算、自动路由与 fallback 均未实现。
+尚未验收：Profile 从 `unverified` 升为 `verified` 所需的能力矩阵和用户可见晋级操作尚未接受；因此 NVIDIA 的最小 write / stop 证据通过后仍不静默改写其标签。Ox Alpha 的实验性 write probe 仍以 provider `400 Server tool request failed` 结束。实际费用、日/月汇总、预算、自动路由与 fallback 均未实现。
 
 ## 待确认
 

@@ -1,6 +1,6 @@
 # AIworker Relay v0.1 开发包
 
-状态：首个实现切片已完成本机代码、页面路径、Git-backed Marketplace CLI 安装/更新与受控 runtime 收敛验收。本文同时记录已交付边界，以及仍待有可用 provider 容量时完成的修复后 dashboard-managed write 验收。
+状态：首个实现切片已完成本机代码、页面路径、Git-backed Marketplace CLI 安装/更新、受控 runtime 收敛，以及修复后 NVIDIA dashboard-managed 最小 write / TERM 停止验收。本文同时记录已交付边界与仍待明确的 Profile 能力晋级规则。
 
 ## 首个闭环
 
@@ -32,7 +32,7 @@
 
 ## 外部 run 的固定行为
 
-每次外部派发先验证用户显式选择或接受 Codex 建议，随后检查 Profile 是否冻结。通过检查后，控制面创建 run 目录、worktree 和最小 `CODEX_HOME`，再启动一个独立进程组中的 `codex exec`。浏览器是否打开不会改变 run 生命周期；`external-workersd` 会保留到 run 结束，结束后没有浏览器客户端才进入 60 秒空闲退出计时。
+每次外部派发先验证用户显式选择或接受 Codex 建议，随后检查 Profile 是否冻结。通过检查后，控制面创建 run 目录、worktree 和最小 `CODEX_HOME`，再启动一个独立进程组中的 `codex exec`。浏览器是否打开不会改变 run 生命周期；`external-workersd` 保持本机 loopback 控制面可用，但空闲时不采样 run、不读取 provider，也不派发任何 worker。
 
 写入任务要求 Git 仓库存在可解析的 `HEAD`。这是一项刻意透明的 alpha 限制：它给 worker 一个稳定、可比较的源快照，也使 diff 能够成为 Codex 的验收证据。主工作区未提交改动不被复制，避免为尚未证实的脏树同步需求构建复杂的 patch / merge 层。
 
@@ -116,7 +116,7 @@ API 的 error body 固定为 `{ "code": "…", "message": "…" }`。`frozen_pro
 
 已完成的本机验收不是仅看页面截图：聚焦测试覆盖 Task Packet、worktree、TLS、Profile 与进程两阶段停止；隔离 daemon 真实服务了多页 Web；通过页面查询 OpenRouter、发现 Ox Alpha、带入可用推理档位、创建 Profile、冻结 Profile，并由真实 API 拒绝冻结派发。
 
-Git-backed marketplace 的干净 CLI 安装 / 更新与首次 Plugin runtime bootstrap 已经通过。NVIDIA 模型已在隔离 `codex exec --approve-for-me` 中实际完成限定写入，真实外部 CLI child 也已由 dashboard 温和停止。剩余的完整闭环是：在 provider 可用时，由修复后的控制面完成同一个 managed write run，并保留其 diff、结果与看板状态；最近一次 NVIDIA 受控派发因 `429` 在启动后失败，不能作为成功证据。Codex 最后读取 task packet、last message、diff 与验证证据。
+Git-backed marketplace 的干净 CLI 安装 / 更新与首次 Plugin runtime bootstrap 已经通过。NVIDIA 模型已在修复后的 dashboard-managed detached worktree 中实际完成限定 marker 写入；文件清单只含该 marker、`git diff --check` 通过，真实外部 CLI child 随后由 dashboard 温和停止并记录 `term_exited`。历史 `429` 和本机 Node 启动失败仍保留为失败证据，不覆盖这项通过的窄验收。Codex 最后读取 Task Packet、可得的模型文字、diff、文件清单、进程结果与 run record；有意 TERM 停止的 run 不要求模型再产生最终文字。
 
 实际费用没有可信归因时，验收只检查它被标记为 `pending` 或 `unavailable`。任何显示为实际金额的费用都必须有可追溯的 provider 关联证据。
 

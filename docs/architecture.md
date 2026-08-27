@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.9 已实现本地控制面、静态看板、Profile、隔离 run 和证据路径；Git-backed Marketplace 的干净安装与两次更新、以及 bundle/runtime/daemon 的 setup 收敛均已实测。非交互式 `codex exec` 已使用受限的 workspace-write 自动审批；同一 NVIDIA 模型的真实 CLI 工具写入已成功。首个修复后的 dashboard-managed write 则被该免费模型的 OpenRouter `429` 中断，所以“同一个 managed run 同时完成写入和看板闭环”仍不能写成已完成。
+状态：v0.1.16 已实现固定持久本机控制面、静态看板、Profile、隔离 run 和证据路径；Git-backed Marketplace 的干净安装与两次更新、以及 bundle/runtime/daemon 的 setup 收敛均已实测。LaunchAgent 现在带有只覆盖自身的最小 `PATH`，以解析 setup 时确定的 Codex CLI 及其 Node runtime；不改写全局环境、Key 或 Profile。非交互式 `codex exec` 已使用受限的 workspace-write 自动审批。2026-08-27 的 NVIDIA dashboard-managed run 已在 detached worktree 中完成精确 marker 写入、文件/diff 回读和真实 `TERM → term_exited` 停止闭环；历史 provider `429` 与修复前本机启动失败保留为失败证据。Profile 的 `verified` 晋级规则仍是独立待决产品问题，不能因这一次窄验收被静默改写。
 
 ## 核心原则
 
@@ -16,7 +16,7 @@
 
 首次配置从一个新的 Codex task 中调用 `$aiworker-relay setup` 开始，随后由 Skill 打开本机 Web 控制面。API Key 与 worker Profile 只在这个 Web 控制面中配置；Skill、Codex 对话与普通 CLI 不接收这些配置值。之后用户仍像平时一样把任务交给 Codex：可以明确指定 profile，也可以接受 Codex 的建议。外部付费用量的派发不应通过不可见的全局拦截发生。
 
-按需启动不等于要求开发者手动启动独立应用。`setup` 会启动或复用 `external-workersd` 并打开浏览器；任何由 Skill 发起的受控外部派发也会自动启动或复用它。它只在有浏览器客户端或活跃外部 run 时保留，二者都没有后自动退出。
+`setup` 建立固定的本机入口 `http://127.0.0.1:49178`。macOS 将同一个 `external-workersd` 注册为用户级 LaunchAgent，登录后可直接打开该地址，不需要再次请求 Codex 打开页面；它不是第二个 Web 服务或桌面应用。其他平台的 setup 同样以持久 daemon 运行当前登录会话，但尚未声明对应的系统登录启动机制。
 
 安装边界必须保持窄：Plugin 不改写主 Codex 的默认模型、provider、原生 worker profile、系统提示、hooks 或项目 `AGENTS.md`。只有外部 run 使用隔离的 Codex 配置。未来若接入 hooks，它们至多提供可观测性或上下文提示；不作为首版路由的事实来源或强制拦截机制。
 
@@ -33,7 +33,7 @@
 | Plugin 与 Skill | AIworker Relay Plugin、`aiworker-relay` Skill、随包的本地资源 | 向 Codex 分发能力、提供 setup 与受控派发入口 | 不全局接管 Codex，也不替代运行控制面 |
 | 开发者与项目 | 开发者、Codex 对话、项目工作区 | 提出目标、明确指定模型或推理档位、查看和停止外部 run | 不直接管理模型 provider 或子进程细节 |
 | Codex 控制层 | Codex / Sol、Task Packet、最终验收 | 判断任务是否适合派生、约束 scope、建议 worker、验收证据 | 不把外部模型升格为第二个决策者 |
-| 本地运行控制面 | 单个按需 `external-workersd`、本地 Web、profile 配置、external supervisor、`.orch/` | 保存本机配置、发现模型、冻结 profile、监管外部进程和展示真实状态 | 不伪造原生子代理的 PID、RSS 或费用 |
+| 本地运行控制面 | 单个持久 `external-workersd`、本地 Web、profile 配置、external supervisor、`.orch/` | 保存本机配置、发现模型、冻结 profile、监管外部进程和展示真实状态 | 不伪造原生子代理的 PID、RSS 或费用 |
 | 外部执行面 | 隔离的 Codex CLI、OpenRouter、选定模型 | 在限定 packet 内完成劳动并返回结果和证据 | 不持有主 Codex 的完整上下文、hook 或最终验收权 |
 
 这不是一个远程 SaaS 架构。除 OpenRouter 与所选模型外，控制面和运行状态都在开发者本机；项目工作区继续是代码事实来源，Git 继续是变更同步方式。
@@ -44,7 +44,7 @@
 
 | 关注点 | 选择 | 边界与原因 |
 | --- | --- | --- |
-| 本机进程 | 一个按需 `external-workersd` | 同一 Python 进程服务本机 Web、状态 API、SSE 与外部 run 监管；有 Web 客户端或活跃 run 时存在，两者都没有 60 秒后退出。 |
+| 本机进程 | 一个持久 `external-workersd` | 同一 Python 进程服务本机 Web、状态 API、SSE 与外部 run 监管；固定在 `127.0.0.1:49178`。macOS 的用户级 LaunchAgent 在登录时启动该同一进程。 |
 | 本机运行时 | 用户应用数据目录内的专用 `venv` | 明确的 `$aiworker-relay setup` 检查 Python 3.12+，并在缺失时于同一次操作安装依赖；不假设或改写全局 Python 包。 |
 | 本机网络边界 | loopback `127.0.0.1` | Web、SSE 和控制 API 仅服务本机；launcher 通过原子 `daemon.json` 检查、复用或清理失效 daemon 记录。记录绑定一个项目根目录，不同项目会拒绝复用，避免误派 worktree。 |
 | 后端 | Python 3.12+、`asyncio`、`aiohttp` | `asyncio` 负责外部 CLI 的异步生命周期；`aiohttp` 只负责本机 HTTP、静态资源和 SSE，避免手写 HTTP 协议或引入 FastAPI/Uvicorn 组合。 |
@@ -57,7 +57,7 @@
 
 运行时依赖只有 `aiohttp`、`psutil`、`keyring` 和 `truststore`。不引入数据库、Redis、消息队列、WebSocket 框架、前端框架或额外的进程管理器。
 
-空闲成本边界如下：没有浏览器客户端且没有活跃外部 run 时，守护进程在 60 秒后退出；看板打开但没有外部 run 时，不做状态采样或自动 provider 请求。账户与公开跑分只在用户主动刷新时读取；只有活跃的外部 run 才有一个 2 秒 RSS 采样任务。原生 Codex worker 不进入该采样循环。
+空闲成本边界如下：持久 daemon 只维持一个 loopback listener；它在空闲时不做状态采样、自动 provider 请求或外部 worker 派发。账户与公开跑分只在用户主动刷新时读取；只有活跃的外部 run 才有一个 2 秒 RSS 采样任务。原生 Codex worker 不进入该采样循环。
 
 ## 组件责任与事实来源
 
@@ -182,7 +182,7 @@ stateDiagram-v2
 
 ## 配置与秘密边界
 
-- 本地 Web 页面是生产配置 OpenRouter API key 与 profile 的入口；由按需 `external-workersd` 服务。
+- 本地 Web 页面是生产配置 OpenRouter API key 与 profile 的入口；由固定 loopback `external-workersd` 服务。
 - 运行时为外部 run 生成隔离的 Codex 配置；不得复用主 Codex 的完整运行目录。
 - API key 由 `keyring` 写入系统密钥服务，不进仓库、不进 task packet、不在页面回显；没有可用密钥服务时不允许明文降级。
 - `.orch/` 保存项目级 run 元数据、证据与 detached worktree，并被 Git 忽略。

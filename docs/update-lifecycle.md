@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.9 已实现并在用户应用数据中完成受控 runtime 收敛。Git-backed Marketplace 的干净 CLI 安装与已安装 bundle 更新已完成真实验收；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
+状态：v0.1.16 已实现并在用户应用数据中完成受控 runtime 收敛和持久本机入口验收。macOS LaunchAgent 为其自身提供解析 Codex CLI/Node 所需的最小 `PATH`；空闲 daemon 的受控停启已在同一固定地址完成真实回读。Git-backed Marketplace 的干净 CLI 安装与已安装 bundle 更新已完成真实验收；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
 
 ## 为什么需要这一项
 
@@ -55,7 +55,7 @@ Codex Marketplace / Plugin UI
         ▼
 用户在新 task 执行 $aiworker-relay setup
         │
-        ├─ bundle version = runtime version，且 daemon 匹配
+        ├─ bundle version = runtime version，且 daemon 匹配固定持久入口
         │      └─ 正常打开或复用看板
         │
         └─ bundle version ≠ runtime version
@@ -64,18 +64,18 @@ Codex Marketplace / Plugin UI
                │      └─ 不更新、不杀进程；明确报告“更新等待当前任务结束”
                │
                └─ 没有活跃 external run
-                      └─ 受控替换 runtime → 启动新 daemon → 健康检查通过 → 打开看板
+                      └─ 受控替换 runtime → 启动固定持久 daemon → 健康检查通过 → 打开看板
 ```
 
-`setup` 是唯一自动执行 runtime 更新的入口，因为它已是用户明确授权的本机安装动作。`dispatch` 不触发隐式升级：若发现 bundle/runtime 不一致，它应提示用户先运行 setup。这样一次可能下载依赖、替换 venv 的操作不会隐藏在一次任务派发中。
+`setup` 是唯一自动执行 runtime 更新的入口，因为它已是用户明确授权的本机安装动作。`dispatch` 不触发隐式升级：若发现 bundle/runtime 不一致，或 daemon 不是固定持久入口，它应提示用户先运行 setup。这样一次可能下载依赖、替换 venv 的操作不会隐藏在一次任务派发中。
 
-如果更新因活跃 run 被延后，用户在任务结束后再次执行 setup。系统不新增常驻 watcher 来等待或自动重试；这既避免空闲资源消耗，也不会把更新动作从用户手中拿走。
+如果更新因活跃 run 被延后，用户在任务结束后再次执行 setup。系统不新增后台更新 watcher 来等待或自动重试；持久控制面只提供本机入口，不触发 provider 读取或外部任务。
 
 ## 更新状态与判定
 
 | 状态 | 判定 | 可执行动作 |
 | --- | --- | --- |
-| `up_to_date` | bundle、runtime、健康 daemon（若存在）版本一致 | 正常 setup / dispatch |
+| `up_to_date` | bundle、runtime、健康 daemon（若存在）版本一致，且 daemon 位于固定持久入口 | 正常 setup / dispatch |
 | `runtime_missing` | 没有可用专用 venv | setup 创建首次 runtime |
 | `update_required` | runtime 缺失、无法执行 version，或版本不同 | setup 进入更新判定 |
 | `update_deferred_active_run` | 受健康检查确认的 daemon 有 `starting`、`running` 或 `stopping` external run | 保留原 runtime 与进程；报告需在 run 结束后重新 setup |
@@ -92,9 +92,9 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 1. launcher 从新 bundle 的 package `VERSION` 与现有 `orch version` 读取目标和现状；不依赖全局 Python 依赖。
 2. 若有 daemon，先以 `daemon.json`、`/api/health` 和 `/api/overview` 交叉确认它就是本产品的 daemon，且没有活跃 external run。
-3. 只在该判定成立时，请求 idle daemon 正常退出；首个兼容旧 runtime 的升级桥接仅可终止 health 返回 PID 与记录一致的 idle daemon。
+3. 只在该判定成立时，请求 idle daemon 正常退出；首个兼容旧 runtime 的升级桥接仅可终止 health 返回 PID 与记录一致的 idle daemon。macOS 的 LaunchAgent 将这视为一次正常退出，直到新 runtime 就绪后才重新启动同一 daemon。
 4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv` 并从当前 Plugin bundle 安装 runtime。
-5. 依次检查新 `orch version`、新 daemon health 和版本一致性。全部通过才删除 `venv.previous`。
+5. 依次检查新 `orch version`、固定 `127.0.0.1:49178` daemon health、持久状态和版本一致性。全部通过才删除 `venv.previous`。
 6. 任一步失败时，清理未完成的新 venv，并将 `venv.previous` 放回原路径；Profile、Key 与项目运行证据不写入、不迁移。
 
 如果进程在第 4 至第 5 步之间被中断，下一次 setup 发现 `venv` 缺失且 `venv.previous` 存在时先恢复旧 runtime，再报告或重新尝试更新。该临时备份只解决一次更新事务的失败恢复，不形成长期多版本管理系统。

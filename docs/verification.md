@@ -64,6 +64,24 @@
 
 因此，`--approve-for-me` 是已验明的最小 runner 修复，429 是当前免费模型的 provider 结果而非成功。NVIDIA Profile 继续保持 `unverified`；在该模型有可用额度时，仍需一次修复后 dashboard-managed 成功 write 才能完成同-run 验收。
 
+## 2026-08-27 持久本机入口验收
+
+本次记录覆盖本机看板入口的生命周期修复，以及用户已明确授权的第二次 NVIDIA 最小 write run 的证据回读。控制面修复没有读取或改写 OpenRouter Key、Profile，也没有执行提交、合并或模型切换。
+
+| 验证点 | 结果 | 证据与边界 |
+| --- | --- | --- |
+| 完整 Python 回归 | 通过 | 使用应用级 venv 运行 `unittest discover -s tests`，33 项通过；新增覆盖 LaunchAgent 的最小 PATH、空闲 daemon 停止后的固定端口复用语义与受控重启路径。 |
+| 固定持久控制面 | 通过 | 显式 setup 将 bundle/runtime/daemon 收敛到 `0.1.16`；`/api/health` 回读 `port=49178`、`persistent=true`，绑定 `/Users/ethan/AIworker` 且无 active run。 |
+| macOS 登录入口与 CLI 运行时 | 通过 | `~/Library/LaunchAgents/com.aiworker.relay.plist` 已加载为运行中的 `com.aiworker.relay`；包含现有 `external-workersd`、项目根目录、固定端口、`--persistent`、`--codex-path /opt/homebrew/bin/codex`，以及仅对该 LaunchAgent 生效的 `PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`。不含 Key 或 Profile，未改写全局 PATH。 |
+| 真实空闲停启 | 通过 | 对已验证空闲的 v0.1.16 daemon 执行受控 shutdown 后重建同一 LaunchAgent；PID 从 `78627` 变为 `78731`，同一 `127.0.0.1:49178` 回读为 `persistent=true` / `idle`。这确认 socket TIME_WAIT 不会再被裸 socket 预检误判为实际 listener 冲突。 |
+| 原 60 秒空闲阈值 | 通过 | v0.1.16 重启后的 PID `78731` 在无浏览器 SSE 客户端、无 active run 下运行满 1 分 52 秒；`/api/health` 仍返回同一 PID 与 `persistent=true`。空闲控制面未执行 provider 读取或 worker 派发。 |
+| 首次固定入口 managed-write 尝试 | 未执行外部进程，保留证据 | run `98fec7f253694862a7c49bdeccde6892` 已从 `HEAD` 建立 detached worktree，并记录 `dirty_workspace_excluded=true`；随后 daemon 发现 LaunchAgent 默认 PATH 没有 Codex CLI，记录为 `unavailable`。没有 PID、provider 请求、marker 文件或 worktree diff，因此不得称为真实 write 成功。 |
+| 第二次 NVIDIA 最小 write 尝试 | 未通过，provider 未触达 | run `1c9cf3ebb2f94a0880abda8f8ac9ec44` 在隔离 worktree 中实际启动 PID / PGID `73413`，采集到一条 RSS 样本，随后以 `env: node: No such file or directory`、退出码 `127` 失败。`files.json` 为空、diff 为 0、marker 不存在；不把 wrapper 启动视为模型写入，也不自动重试或切换模型。 |
+| 第三次 NVIDIA 最小 write | 通过写入与自然收敛 | run `cf485ee8fec44b2bb5aba277e2677fed` 在隔离 worktree 中退出码 0；`files.json` 仅含 `AIWORKER_WRITE_ACCEPTANCE.md`，内容精确为 `AIWORKER_WRITE_ACCEPTANCE=1\n`，`git diff --check` 通过，且 `last-message.md` 记录了同样的文件和检查结果。模型提前结束外层 run，故本次没有形成可停止的活跃进程。 |
+| NVIDIA stop-only 连续验收 | 通过 | run `ba410ad11f3f4531a0026277fc14b201` 以相同模型和相同 detached 范围再次创建同一精确 marker；运行期间 PID / PGID `83968` 与 15 条 RSS 样本可观测。控制面发送非强制 TERM 后记录 `stop.requested`、`term_exited`、退出码 `0`、`forced=false`；没有 KILL。其 `files.json` 只含 marker，主工作区没有该文件，`git diff --check` 通过。因 Packet 要求被 TERM 前不产生最终文字，此 run 没有 `last-message.md`，这是预期证据边界。 |
+
+因此，v0.1.16 已修复并验证 LaunchAgent 对 Node 包装的 Codex CLI 的本机启动前提；NVIDIA 的最小真实 external write、隔离、证据回读和 TERM 停止联动均已通过。Profile 仍显示 `unverified`，不是本次验收失败，而是当前产品尚未接受“哪些能力足以晋级”及对应写入操作；不能在没有该规则时静默改变用户的长期 Profile 状态。
+
 ## 已验证结论
 
 1. 使用独立 `CODEX_HOME` 的 Codex CLI 可以真实地走 OpenRouter 调用 Ox Alpha，不需要自己实现模型 SDK 或 agent loop。
@@ -76,7 +94,7 @@
 - Ox Alpha 当前页面标明支持 tool calling 和 `response_format`，但不提供 JSON Schema enforcement；本地实测也没有得到可用 schema 约束。因此 result contract 不能依赖该能力。
 - Ox Alpha 的免费 / 预览路径在一次工具调用后的后续生成与一次受控重试中都触发 429。现有证据只能说明该 provider / model 当时受到限流，不能据此断言 Codex CLI 多轮 harness 普遍不兼容；单轮路由成功仍不足以证明其适合长任务。
 - Codex CLI 的 JSON 输出没有传递 OpenRouter 的实际 cost 或 generation ID。只有在费用归因方案明确后，才可以承诺单 run、日、月的真实费用面板。
-- 进程停止已具有看板与 daemon 代码路径，且 OS 进程组语义已测；Ox Alpha 的真实 write probe 启动后即在 provider 工具调用阶段失败，故尚未用可持续运行的真实 Codex CLI 子进程完成完整的看板取消联动验收。
+- NVIDIA 的当前实测已经用可持续运行的真实 Codex CLI 子进程完成看板 TERM 停止联动验收；它只证明本记录中固定 marker / 前台等待这一窄任务的进程控制，不自动推广为任意多轮任务的完成质量或费用归因证明。
 
 ## 对下一轮验收与演进的直接影响
 

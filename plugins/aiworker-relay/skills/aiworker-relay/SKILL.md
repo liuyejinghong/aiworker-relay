@@ -11,7 +11,7 @@ Use this capability only for external OpenRouter-backed coding work. Codex owns 
 
 - Resolve this Skill's Plugin root by walking up to the directory containing `.codex-plugin/plugin.json`. Its launcher is `scripts/launch_external_workers.py`.
 - For first use or when the user asks to configure workers, run `python3 <plugin-root>/scripts/launch_external_workers.py status`.
-- If the runtime is ready, run `python3 <plugin-root>/scripts/launch_external_workers.py setup`. It starts or reuses the loopback control plane and opens the local Web page.
+- If the runtime is ready, run `python3 <plugin-root>/scripts/launch_external_workers.py setup`. It starts or reuses the fixed loopback control plane and opens the local Web page. On macOS, setup also installs the user-level entry for that same daemon; afterward the user can directly open `http://127.0.0.1:49178` without asking Codex to reopen it.
 - An explicit `$aiworker-relay setup` request authorizes this one-time local bootstrap. If the runtime is absent, briefly state that setup will create the dedicated application-data venv and install this Plugin source plus its four direct runtime dependencies, then run `python3 <plugin-root>/scripts/launch_external_workers.py setup` in the same turn. Do not ask for a second confirmation.
 - For a generic configuration request that does not explicitly ask to run setup, do not bootstrap. Explain the one-time setup action and wait for the user to request it.
 - OpenRouter API keys and worker Profiles are configured only in that page. Never request, print, add, or pass an API key through the Codex conversation, a Task Packet, or a regular command argument.

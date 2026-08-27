@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1.9 已实现本地看板、supervisor 与派发代码路径，并已完成 Git-backed Marketplace 的干净 CLI 安装/更新和 runtime 版本收敛。相同 NVIDIA 模型已完成一次隔离的真实 Codex CLI 工具写入，真实 dashboard child 也已温和停止；修复后的 managed write 最近受免费模型 `429` 限流影响，不能写成完整同 run 闭环已通过。
+状态：v0.1.16 已实现固定持久本机看板、supervisor 与派发代码路径，并已完成 Git-backed Marketplace 的干净 CLI 安装/更新和 runtime 版本收敛。LaunchAgent 仅为自身提供解析 Codex CLI/Node 所需的最小 `PATH`，普通用户环境不受改写。相同 NVIDIA 模型已在一次 dashboard-managed detached run 中完成精确 marker 写入、隔离回读和温和停止；修复前的 managed retry 因 `node` 缺失而在 provider 前失败，历史免费模型 `429` 也仍保留为独立失败证据。Profile 的 verified 晋级仍须遵从明确能力标准。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 
@@ -23,7 +23,7 @@ codex plugin add aiworker-relay@aiworker-relay
 
 ### 2. 在新 task 中完成 setup
 
-用户新建一个 Codex task，调用 `$aiworker-relay setup`。如果本机运行时尚未存在，这一条明确请求会创建专用 venv、安装 Plugin 的直接运行时依赖，再启动或复用按需 `external-workersd` 并打开本机 Web 控制面；不再追加一次对话式安装确认。它不在 Codex 对话、Skill 参数或普通 CLI 中收集 API Key 或模型配置。泛泛的“配置 worker”请求不会自动触发这个 bootstrap。配置只影响外部 worker lane，不影响用户平时的 Codex 工作方式。用户不需要双击或常驻运行独立软件。
+用户新建一个 Codex task，调用 `$aiworker-relay setup`。如果本机运行时尚未存在，这一条明确请求会创建专用 venv、安装 Plugin 的直接运行时依赖，再启动或复用固定地址 `http://127.0.0.1:49178` 的本机 Web 控制面；不再追加一次对话式安装确认。macOS 同时注册用户级 LaunchAgent，因此之后可直接打开该地址，不必再找 Codex 重新打开页面。它不在 Codex 对话、Skill 参数或普通 CLI 中收集 API Key 或模型配置。泛泛的“配置 worker”请求不会自动触发这个 bootstrap。配置只影响外部 worker lane，不影响用户平时的 Codex 工作方式。
 
 ### 3. 连接 OpenRouter
 

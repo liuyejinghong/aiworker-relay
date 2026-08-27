@@ -1,6 +1,6 @@
 # 产品定义：Codex 外部 Worker Plugin
 
-状态：v0.1.9 本地控制面、应用级 runtime 收敛与空闲 daemon 的受控更新已完成本机验收；Git-backed Marketplace 的干净 CLI 安装与两次更新也已实测。相同 NVIDIA 免费模型完成了隔离的真实 Codex CLI 工具写入，真实 dashboard child 也成功温和停止。修复后的 managed write 最近被 provider `429` 限流中断，因此仍不能把“同一 managed run 的成功写入和看板闭环”标为已验收；Ox Alpha 也仍不能标为 verified。
+状态：v0.1.16 固定持久本机控制面、应用级 runtime 收敛与受控更新已完成本机验收；Git-backed Marketplace 的干净 CLI 安装与两次更新也已实测。相同 NVIDIA 免费模型现已在 dashboard-managed detached worktree 中完成精确写入、文件/diff 回读和温和 `term_exited` 停止。LaunchAgent 仅为自身注入 setup 时解析的 Codex/Node 最小 `PATH`，不改写全局环境。修复前的 `node` 启动失败和历史 provider `429` 均保留为失败事实；NVIDIA Profile 是否由这项窄能力晋级为 `verified` 仍依赖尚未接受的能力标准，不能静默变更。Ox Alpha 也仍不能标为 verified。
 
 ## 一句话
 
@@ -30,9 +30,9 @@ Plugin 安装不接管 Codex：不得静默改写主 Codex 的默认模型、pro
 
 `$aiworker-relay setup` 打开本机 Web 控制面并呈现启动结果；若本机运行时尚未存在，这个明确的 setup 请求会在同一次操作中创建专用环境并完成安装，不再要求第二次对话确认。API Key 与 worker 模型 Profile 不在 Codex 对话、Skill 参数或普通 CLI 配置中录入。
 
-本机控制面由一个按需 `external-workersd` 提供。它在浏览器客户端或外部 run 存在时运行，二者都不存在 60 秒后退出；页面使用事件推送观察运行态，不做空闲轮询。它不是常驻服务，也不是独立桌面应用。
+本机控制面由一个持久 `external-workersd` 提供，固定地址为 `http://127.0.0.1:49178`。macOS 的 `$aiworker-relay setup` 会注册用户级 LaunchAgent；登录后用户可直接打开该地址，不需要再次请求 Codex 打开页面。它仍是同一个本机控制面，不是独立桌面应用或第二个 Web 服务。
 
-“按需启动”不要求用户双击或常驻运行任何软件。首次调用 `$aiworker-relay setup` 时，Skill 启动或复用它并打开浏览器；之后每次由 Skill 进行受控外部派发时，若它尚未运行，Skill 同样自动启动它，若正在运行则直接复用。开发者只使用 Codex 和浏览器中的看板。
+空闲控制面只保持 loopback listener：页面继续用事件推送观察运行态，但不会轮询状态、读取 provider、启动 worker 或产生外部用量。账户和公开跑分仍只在用户主动刷新时读取。一个 control plane 继续绑定一个项目根目录，不会静默切换到另一个项目。
 
 ## 用户要解决的问题
 
@@ -129,7 +129,7 @@ API key 的最终录入和更新入口在本机 Web 设置页。页面不得回�
 - Task Packet、隔离 `CODEX_HOME`、detached worktree、`codex exec --approve-for-me` harness、JSONL 证据和 TERM → 确认 KILL 的代码路径。
 - Keyring 保存与验证的实现入口，但不会在测试中读取、回显或代填用户 Key。
 
-仍未完成的产品验收是：以用户明确允许且当前有可用额度的模型，经修复后的控制面成功派发一个真实 write run，并在同一个 run 中从看板观察结果与停止生命周期。Git-backed Marketplace CLI 安装与更新已完成实测；实际费用归因继续后置，本地模型接入也不在当前实现范围。
+最小真实 external write / 隔离 / evidence 回读 / TERM 停止验收已经完成。仍未完成的产品合同是 Profile 从 `unverified` 升为 `verified` 的能力标准及用户可见晋级操作；实际费用归因继续后置，本地模型接入也不在当前实现范围。Git-backed Marketplace CLI 安装与更新是独立的分发证据，不把未单独观察的 Codex Desktop 更新交互写成已完成。
 
 ## 与 `sol-worker-routing-codex` 的关系
 

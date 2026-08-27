@@ -27,7 +27,7 @@ The developer's explicit model and reasoning choice always wins. A Codex recomme
 ## What is implemented today
 
 - A Codex Plugin and `$aiworker-relay` Skill for setup and explicitly authorized dispatch.
-- A local, on-demand Web control plane for OpenRouter connection settings, worker profiles, and active external runs.
+- A fixed, persistent local Web control plane for OpenRouter connection settings, worker profiles, and active external runs.
 - OS-keyring storage for the OpenRouter API key; it is not entered through the Codex chat or written to the repository.
 - Model-name or model-link discovery against the OpenRouter catalog, with a profile default for supported reasoning effort and a separate enable/freeze state.
 - A worker dashboard showing current model metadata, prices, context window, and exact-model public benchmark records when the user requests a refresh.
@@ -44,7 +44,7 @@ The developer's explicit model and reasoning choice always wins. A Codex recomme
 
 ## Current release status
 
-**Pre-release.** The Git-backed Marketplace CLI path has completed a clean current-v0.1.9 install and prior bundle updates, and explicit setup has converged the bundle, local runtime, and daemon versions. v0.1.9 also fixes the non-interactive Codex approval path: the exact NVIDIA model completed a real tool-capable CLI write in an isolated worktree. The first dashboard-managed v0.1.9 write then received the free model's OpenRouter `429 Too Many Requests`, which was recorded as a failure rather than hidden or retried. A successful post-fix managed write is therefore still required before a release claim; no tag or public release has been created.
+**Pre-release.** v0.1.16 provides a persistent loopback dashboard without idle provider activity or changes to the user's global environment. The explicitly selected NVIDIA Profile has completed a dashboard-managed detached run that wrote only the fixed acceptance marker, passed file/diff readback, and was stopped by TERM as `term_exited` without KILL. The Git-backed Marketplace CLI path has previously completed a clean current-v0.1.9 install and bundle updates; this remains pre-release evidence rather than proof of every Codex Desktop update interaction. No tag or GitHub Release is created by this pre-release.
 
 Source repository: [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay). The documented Git marketplace CLI flow has been observed end to end; that does not by itself establish every Codex Desktop update interaction or a public release.
 

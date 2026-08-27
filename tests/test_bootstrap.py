@@ -10,7 +10,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from orchestrator import __version__
 from orchestrator.cli import main
@@ -77,6 +77,8 @@ class BootstrapSmokeTests(unittest.TestCase):
 
     def test_explicit_setup_bootstraps_without_a_second_install_flag(self) -> None:
         runtime = Path("/tmp/external-workers-test/orch")
+        codex_path = Path("/opt/test/codex")
+        node_path = Path("/opt/test/node")
         status = {
             "python_supported": True,
             "runtime_root": "/tmp/external-workers-test/venv",
@@ -86,6 +88,9 @@ class BootstrapSmokeTests(unittest.TestCase):
         with (
             patch.object(launcher, "runtime_status", return_value=status),
             patch.object(launcher, "reconcile_runtime", return_value=(runtime, None)) as reconcile,
+            patch.object(launcher, "current_codex_cli", return_value=codex_path),
+            patch.object(launcher, "current_node_cli", return_value=node_path),
+            patch.object(launcher, "ensure_macos_persistent_entry") as persistent_entry,
             patch.object(launcher, "run_orch", return_value=0) as run_orch,
             patch.object(launcher, "_validate_setup_result") as validate,
         ):
@@ -93,8 +98,129 @@ class BootstrapSmokeTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         reconcile.assert_called_once_with()
-        run_orch.assert_called_once_with(runtime, ["setup", "--no-open"])
+        persistent_entry.assert_called_once_with(
+            runtime=runtime.parent.parent,
+            project_root=Path.cwd(),
+            codex_path=codex_path,
+            node_path=node_path,
+        )
+        run_orch.assert_called_once_with(
+            runtime,
+            [
+                "setup",
+                "--port",
+                "49178",
+                "--persistent",
+                "--codex-path",
+                "/opt/test/codex",
+                "--no-open",
+            ],
+        )
         validate.assert_called_once_with(__version__)
+
+    def test_orch_setup_forwards_the_persistent_endpoint(self) -> None:
+        output = io.StringIO()
+
+        with (
+            patch("orchestrator.cli.ensure_daemon", return_value="http://127.0.0.1:49178") as ensure,
+            redirect_stdout(output),
+        ):
+            exit_code = main(
+                ["setup", "--no-open", "--port", "49178", "--persistent"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        ensure.assert_called_once_with(
+            data_dir=None,
+            project_root=None,
+            port=49178,
+            persistent=True,
+            codex_path=None,
+        )
+        self.assertEqual(output.getvalue(), "http://127.0.0.1:49178\n")
+
+    def test_macos_launch_agent_uses_only_the_local_daemon_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv"
+            project = root / "project"
+            codex_path = Path("/opt/homebrew/bin/codex")
+            node_path = Path("/opt/homebrew/bin/node")
+            with patch.object(launcher, "app_data_root", return_value=root / "app-data"):
+                payload = launcher.macos_launch_agent_payload(
+                    runtime=runtime,
+                    project_root=project,
+                    codex_path=codex_path,
+                    node_path=node_path,
+                )
+
+        arguments = payload["ProgramArguments"]
+        self.assertEqual(payload["Label"], "com.aiworker.relay")
+        self.assertEqual(payload["RunAtLoad"], True)
+        self.assertEqual(payload["KeepAlive"], {"SuccessfulExit": False})
+        self.assertEqual(
+            payload["EnvironmentVariables"],
+            {"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
+        )
+        self.assertEqual(
+            arguments,
+            [
+                str(runtime / "bin/external-workersd"),
+                "--serve",
+                "--data-dir",
+                str(root / "app-data"),
+                "--project-root",
+                str(project.resolve()),
+                "--port",
+                "49178",
+                "--persistent",
+                "--codex-path",
+                str(codex_path),
+            ],
+        )
+        self.assertNotIn("key", " ".join(arguments).lower())
+
+    def test_wait_for_fixed_port_release_retries_after_owned_entry_teardown(self) -> None:
+        with (
+            patch.object(
+                launcher,
+                "_assert_fixed_port_is_available",
+                side_effect=[launcher.RuntimeUpdateError("port busy"), None],
+            ) as probe,
+            patch.object(launcher.time, "sleep") as sleep,
+        ):
+            launcher._wait_for_fixed_port_release()
+
+        self.assertEqual(probe.call_count, 2)
+        sleep.assert_called_once_with(0.05)
+
+    def test_fixed_port_probe_allows_normal_loopback_reuse(self) -> None:
+        socket_factory = MagicMock()
+        probe = socket_factory.return_value.__enter__.return_value
+        with patch.object(launcher.socket, "socket", socket_factory):
+            launcher._assert_fixed_port_is_available()
+
+        probe.setsockopt.assert_called_once_with(
+            launcher.socket.SOL_SOCKET,
+            launcher.socket.SO_REUSEADDR,
+            1,
+        )
+        probe.bind.assert_called_once_with(("127.0.0.1", 49178))
+
+    def test_idle_shutdown_waits_for_fixed_port_release_after_exit(self) -> None:
+        snapshot = launcher.DaemonSnapshot(
+            "idle",
+            pid=123,
+            endpoint="http://127.0.0.1:49178",
+        )
+        with (
+            patch.object(launcher, "_local_request", return_value=(200, {})),
+            patch.object(launcher, "_wait_for_exit", return_value=True),
+            patch.object(launcher, "_wait_for_fixed_port_release") as wait_for_port,
+        ):
+            launcher.shutdown_idle_daemon(snapshot)
+
+        wait_for_port.assert_called_once_with()
 
     def test_active_run_defers_runtime_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -115,6 +241,31 @@ class BootstrapSmokeTests(unittest.TestCase):
 
         self.assertIsNone(orch)
         self.assertIn("run-1", deferred or "")
+
+    def test_idle_transient_daemon_is_restarted_for_the_stable_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv"
+            (runtime / "bin").mkdir(parents=True)
+            (runtime / "bin/python").touch()
+            orch = runtime / "bin/orch"
+            orch.touch()
+            snapshot = launcher.DaemonSnapshot(
+                "idle",
+                version=__version__,
+                endpoint="http://127.0.0.1:61234",
+            )
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "installed_runtime_version", return_value=__version__),
+                patch.object(launcher, "daemon_snapshot", return_value=snapshot),
+                patch.object(launcher, "shutdown_idle_daemon") as shutdown,
+            ):
+                actual_orch, deferred = launcher.reconcile_runtime()
+
+        self.assertEqual(actual_orch, orch)
+        self.assertIsNone(deferred)
+        shutdown.assert_called_once_with(snapshot)
 
     def test_failed_runtime_replacement_restores_the_previous_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

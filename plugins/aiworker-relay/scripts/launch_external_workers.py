@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
 import shutil
 import signal
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -21,6 +24,8 @@ from typing import Any, Sequence
 
 APP_NAME = "Codex External Workers"
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
+PERSISTENT_CONTROL_PORT = 49178
+LAUNCH_AGENT_LABEL = "com.aiworker.relay"
 
 
 class RuntimeUpdateError(RuntimeError):
@@ -37,6 +42,8 @@ class DaemonSnapshot:
     endpoint: str | None = None
     active_runs: tuple[str, ...] = ()
     reason: str | None = None
+    persistent: bool = False
+    project_root: str | None = None
 
 
 def app_data_root() -> Path:
@@ -56,6 +63,34 @@ def venv_python(venv_root: Path) -> Path:
 
 def venv_orch(venv_root: Path) -> Path:
     return venv_root / ("Scripts/orch.exe" if sys.platform.startswith("win") else "bin/orch")
+
+
+def venv_daemon(venv_root: Path) -> Path:
+    return venv_root / (
+        "Scripts/external-workersd.exe"
+        if sys.platform.startswith("win")
+        else "bin/external-workersd"
+    )
+
+
+def current_codex_cli() -> Path | None:
+    """Return the current shell-visible Codex CLI without altering PATH."""
+
+    value = shutil.which("codex")
+    if not value:
+        return None
+    path = Path(value)
+    return path if path.is_file() else None
+
+
+def current_node_cli() -> Path | None:
+    """Return the current shell-visible Node runtime for a Codex CLI wrapper."""
+
+    value = shutil.which("node")
+    if not value:
+        return None
+    path = Path(value)
+    return path if path.is_file() else None
 
 
 def bundle_version() -> str:
@@ -192,10 +227,20 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
         pid=pid,
         endpoint=endpoint,
         active_runs=active_runs,
+        persistent=(
+            health["persistent"]
+            if isinstance(health.get("persistent"), bool)
+            else record.get("persistent") is True
+        ),
+        project_root=(
+            record["project_root"]
+            if isinstance(record.get("project_root"), str)
+            else None
+        ),
     )
 
 
-def _wait_for_exit(pid: int, *, timeout: float = 5.0) -> bool:
+def _wait_for_exit(pid: int, *, timeout: float = 10.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _process_state(pid) is False:
@@ -229,6 +274,8 @@ def shutdown_idle_daemon(snapshot: DaemonSnapshot) -> None:
         raise RuntimeUpdateError("idle daemon refused its controlled shutdown")
     if not _wait_for_exit(snapshot.pid):
         raise RuntimeUpdateError("idle daemon did not exit; runtime was not replaced")
+    if snapshot.endpoint == f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}":
+        _wait_for_fixed_port_release()
 
 
 def _remove_runtime_tree(path: Path) -> None:
@@ -295,7 +342,11 @@ def runtime_status() -> dict[str, object]:
         )
     elif daemon.state == "unknown":
         update_status = "update_blocked_unknown_daemon"
-    elif daemon.state in {"active", "idle"} and daemon.version != expected_version:
+    elif daemon.state in {"active", "idle"} and (
+        daemon.version != expected_version
+        or daemon.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
+        or not daemon.persistent
+    ):
         update_status = (
             "update_deferred_active_run"
             if daemon.state == "active"
@@ -312,6 +363,8 @@ def runtime_status() -> dict[str, object]:
         "runtime_version": actual_version,
         "daemon_version": daemon.version,
         "daemon_state": daemon.state,
+        "daemon_endpoint": daemon.endpoint,
+        "daemon_persistent": daemon.persistent,
         "active_run_ids": list(daemon.active_runs),
         "update_status": update_status,
     }
@@ -368,8 +421,10 @@ def reconcile_runtime() -> tuple[Path | None, str | None]:
     actual_version = installed_runtime_version(orch)
     snapshot = daemon_snapshot(root)
     runtime_needs_replace = actual_version != expected_version
-    daemon_needs_restart = (
-        snapshot.state in {"active", "idle"} and snapshot.version != expected_version
+    daemon_needs_restart = snapshot.state in {"active", "idle"} and (
+        snapshot.version != expected_version
+        or snapshot.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
+        or not snapshot.persistent
     )
     needs_change = runtime_needs_replace or daemon_needs_restart
     if snapshot.state == "active" and needs_change:
@@ -393,10 +448,242 @@ def reconcile_runtime() -> tuple[Path | None, str | None]:
 
 def _validate_setup_result(expected_version: str) -> None:
     snapshot = daemon_snapshot(app_data_root())
-    if snapshot.state not in {"active", "idle"} or snapshot.version != expected_version:
+    if (
+        snapshot.state not in {"active", "idle"}
+        or snapshot.version != expected_version
+        or snapshot.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
+        or not snapshot.persistent
+    ):
         raise RuntimeUpdateError(
-            "runtime setup did not produce a healthy daemon matching this Plugin version"
+            "runtime setup did not produce the persistent control plane expected by this Plugin"
         )
+
+
+def macos_launch_agent_path(home: Path | None = None) -> Path:
+    """Return the user-owned LaunchAgent path for the fixed local endpoint."""
+
+    return (
+        (home or Path.home())
+        / "Library"
+        / "LaunchAgents"
+        / f"{LAUNCH_AGENT_LABEL}.plist"
+    )
+
+
+def macos_launch_agent_payload(
+    *,
+    runtime: Path,
+    project_root: Path,
+    codex_path: Path | None,
+    node_path: Path | None,
+) -> dict[str, object]:
+    """Describe the existing daemon as a login-started local control plane."""
+
+    arguments = [
+        str(venv_daemon(runtime)),
+        "--serve",
+        "--data-dir",
+        str(app_data_root()),
+        "--project-root",
+        str(project_root.resolve()),
+        "--port",
+        str(PERSISTENT_CONTROL_PORT),
+        "--persistent",
+    ]
+    if codex_path is not None:
+        arguments.extend(["--codex-path", str(codex_path)])
+    payload: dict[str, object] = {
+        "Label": LAUNCH_AGENT_LABEL,
+        "ProgramArguments": arguments,
+        "WorkingDirectory": str(project_root.resolve()),
+        "RunAtLoad": True,
+        "KeepAlive": {"SuccessfulExit": False},
+        "ProcessType": "Background",
+    }
+    executable_directories: list[str] = []
+    for executable in (codex_path, node_path):
+        if executable is not None and str(executable.parent) not in executable_directories:
+            executable_directories.append(str(executable.parent))
+    if executable_directories:
+        payload["EnvironmentVariables"] = {
+            "PATH": ":".join(
+                [*executable_directories, "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+            )
+        }
+    return payload
+
+
+def _write_launch_agent(
+    path: Path, payload: dict[str, object], *, allow_owned_update: bool = False
+) -> bool:
+    """Create one exact user LaunchAgent without overwriting a conflicting file."""
+
+    if path.exists() or path.is_symlink():
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeUpdateError(
+                "AIworker Relay LaunchAgent path is not a normal file"
+            )
+    try:
+        existing = plistlib.loads(path.read_bytes())
+    except FileNotFoundError:
+        existing = None
+    except (OSError, plistlib.InvalidFileException) as exc:
+        raise RuntimeUpdateError(f"LaunchAgent file cannot be read: {exc}") from exc
+    if existing is not None:
+        if not isinstance(existing, dict):
+            raise RuntimeUpdateError("AIworker Relay LaunchAgent file is invalid")
+        if existing != payload:
+            existing_arguments = existing.get("ProgramArguments")
+            owns_existing_agent = (
+                existing.get("Label") == LAUNCH_AGENT_LABEL
+                and existing.get("WorkingDirectory") == payload["WorkingDirectory"]
+                and isinstance(existing_arguments, list)
+                and existing_arguments[:1]
+                == [str(venv_daemon(app_data_root() / "venv"))]
+            )
+            if not allow_owned_update or not owns_existing_agent:
+                raise RuntimeUpdateError(
+                    "AIworker Relay LaunchAgent already exists with a different configuration; "
+                    "inspect it before changing the persistent control plane"
+                )
+        else:
+            return False
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temporary:
+        temporary.write(plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True))
+        temporary_path = Path(temporary.name)
+    try:
+        temporary_path.replace(path)
+    except OSError as exc:
+        temporary_path.unlink(missing_ok=True)
+        raise RuntimeUpdateError(
+            f"could not install the AIworker Relay LaunchAgent: {exc}"
+        ) from exc
+    return True
+
+
+def _assert_fixed_port_is_available() -> None:
+    """Check whether the fixed loopback listener can safely be rebound."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", PERSISTENT_CONTROL_PORT))
+        except OSError as exc:
+            raise RuntimeUpdateError(
+                "fixed local control address "
+                f"127.0.0.1:{PERSISTENT_CONTROL_PORT} is already in use"
+            ) from exc
+
+
+def _wait_for_fixed_port_release(*, timeout: float = 5.0) -> None:
+    """Wait briefly for a just-unloaded owned LaunchAgent to release its socket."""
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            _assert_fixed_port_is_available()
+            return
+        except RuntimeUpdateError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
+def _wait_for_persistent_daemon(*, project_root: Path, timeout: float = 5.0) -> None:
+    """Wait for the LaunchAgent to publish the expected loopback control plane."""
+
+    deadline = time.monotonic() + timeout
+    expected_project_root = project_root.resolve()
+    expected_version = bundle_version()
+    while time.monotonic() < deadline:
+        snapshot = daemon_snapshot(app_data_root())
+        if (
+            snapshot.state in {"active", "idle"}
+            and snapshot.version == expected_version
+            and snapshot.endpoint == f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
+            and snapshot.persistent
+            and snapshot.project_root is not None
+            and Path(snapshot.project_root).resolve() == expected_project_root
+        ):
+            return
+        time.sleep(0.05)
+    raise RuntimeUpdateError(
+        "AIworker Relay LaunchAgent did not start its local control plane"
+    )
+
+
+def ensure_macos_persistent_entry(
+    *,
+    runtime: Path,
+    project_root: Path,
+    codex_path: Path | None,
+    node_path: Path | None,
+) -> None:
+    """Install and start the macOS user entry without changing a live run."""
+
+    if sys.platform != "darwin":
+        return
+    snapshot = daemon_snapshot(app_data_root())
+    if snapshot.state == "unknown":
+        raise RuntimeUpdateError(
+            f"setup is blocked because daemon state is unknown: {snapshot.reason}"
+        )
+    if snapshot.state in {"active", "idle"}:
+        if (
+            snapshot.project_root is None
+            or Path(snapshot.project_root).resolve() != project_root.resolve()
+        ):
+            raise RuntimeUpdateError(
+                "the persistent control plane is already bound to another project; "
+                "do not switch it while it may own that project's runs"
+            )
+        return
+
+    agent_path = macos_launch_agent_path()
+    payload = macos_launch_agent_payload(
+        runtime=runtime,
+        project_root=project_root,
+        codex_path=codex_path,
+        node_path=node_path,
+    )
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{LAUNCH_AGENT_LABEL}"
+    loaded = subprocess.run(
+        ["launchctl", "print", target],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).returncode == 0
+    if loaded:
+        result = subprocess.run(
+            ["launchctl", "bootout", target],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode:
+            detail = result.stderr.strip() or result.stdout.strip() or "launchctl failed"
+            raise RuntimeUpdateError(
+                f"could not update the AIworker Relay LaunchAgent: {detail}"
+            )
+        _wait_for_fixed_port_release()
+    else:
+        _assert_fixed_port_is_available()
+    _write_launch_agent(agent_path, payload, allow_owned_update=True)
+    result = subprocess.run(
+        ["launchctl", "bootstrap", domain, str(agent_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "launchctl failed"
+        raise RuntimeUpdateError(
+            f"could not start the AIworker Relay LaunchAgent: {detail}"
+        )
+    _wait_for_persistent_daemon(project_root=project_root)
 
 
 def run_orch(orch: Path, arguments: Sequence[str]) -> int:
@@ -443,7 +730,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"aiworker-relay: {deferred}")
                 return 0
             assert orch is not None
-            command = ["setup"]
+            codex_path = current_codex_cli()
+            node_path = current_node_cli()
+            ensure_macos_persistent_entry(
+                runtime=orch.parent.parent,
+                project_root=Path.cwd(),
+                codex_path=codex_path,
+                node_path=node_path,
+            )
+            command = [
+                "setup",
+                "--port",
+                str(PERSISTENT_CONTROL_PORT),
+                "--persistent",
+            ]
+            if codex_path is not None:
+                command.extend(["--codex-path", str(codex_path)])
             if args.no_open:
                 command.append("--no-open")
             exit_code = run_orch(orch, command)
@@ -458,7 +760,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         runtime = Path(str(status["runtime_root"]))
-        return run_orch(venv_orch(runtime), ["dispatch", *args.orch_arguments])
+        codex_path = current_codex_cli()
+        command = [
+            "dispatch",
+            "--port",
+            str(PERSISTENT_CONTROL_PORT),
+            "--persistent",
+        ]
+        if codex_path is not None:
+            command.extend(["--codex-path", str(codex_path)])
+        return run_orch(
+            venv_orch(runtime),
+            [*command, *args.orch_arguments],
+        )
     except (OSError, RuntimeUpdateError, subprocess.CalledProcessError) as exc:
         print(f"aiworker-relay: runtime setup failed: {exc}", file=sys.stderr)
         return 1
