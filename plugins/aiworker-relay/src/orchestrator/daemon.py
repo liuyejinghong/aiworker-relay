@@ -1077,6 +1077,17 @@ class DaemonState:
                         "cannot start while previously unrecovered run survivor remains alive: "
                         f"{record.run_id}"
                     )
+                if os.name != "nt" and reason in {
+                    "process_not_found",
+                    "process_not_running",
+                }:
+                    group_alive, group_reason = _process_group_state(record)
+                    if group_alive and group_reason is None:
+                        raise RuntimeError(
+                            "cannot start while previously unrecovered run process group "
+                            f"remains alive: {record.run_id}"
+                        )
+                    reason = group_reason or reason
                 await self._record_recovery(
                     record,
                     outcome="recovery_ownership_lost",
@@ -1090,18 +1101,27 @@ class DaemonState:
 
             process, reason = _exact_survivor(record)
             if process is None:
-                await self._record_recovery(
-                    record,
-                    outcome="recovery_ownership_lost",
-                    reason=(
-                        "run was nonterminal when the daemon restarted; "
-                        f"{_recovery_error(reason)}, no signal was sent"
-                    ),
-                )
-                continue
+                group_alive = False
+                group_reason: str | None = None
+                if os.name != "nt" and reason in {
+                    "process_not_found",
+                    "process_not_running",
+                }:
+                    group_alive, group_reason = _process_group_state(record)
+                if not group_alive or group_reason is not None:
+                    await self._record_recovery(
+                        record,
+                        outcome="recovery_ownership_lost",
+                        reason=(
+                            "run was nonterminal when the daemon restarted; "
+                            f"{_recovery_error(group_reason or reason)}, no signal was sent"
+                        ),
+                    )
+                    continue
 
             windows_targets: list[tuple[int, float]] | None = None
             if os.name == "nt":
+                assert process is not None
                 windows_targets, tree_error = self._capture_windows_recovery_targets(
                     process
                 )

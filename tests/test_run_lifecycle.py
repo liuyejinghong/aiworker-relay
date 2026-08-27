@@ -639,6 +639,53 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(record.stop_outcome, "recovery_term_exited")
             self.assertEqual(state.active_run_ids(), ())
 
+    async def test_restart_reconciles_root_gone_posix_group_with_term(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state, record = self._state_and_record(Path(temporary), status="running")
+            record.pid = 4242
+            record.process_group = 4242
+            record.process_started_at = 123.0
+
+            def killpg(group: int, signum: int) -> None:
+                self.assertEqual(group, 4242)
+                if signum == 0 and killpg.call_count == 4:
+                    raise ProcessLookupError
+                killpg.call_count += 1
+
+            killpg.call_count = 1
+            with (
+                patch(
+                    "orchestrator.daemon._exact_survivor",
+                    return_value=(None, "process_not_found"),
+                ),
+                patch("orchestrator.daemon.os.killpg", side_effect=killpg) as signal_group,
+            ):
+                await state.reconcile_records(grace_seconds=0)
+
+            self.assertIn(
+                (4242, signal.SIGTERM),
+                [call.args for call in signal_group.call_args_list],
+            )
+            self.assertEqual(record.status, "incomplete")
+            self.assertEqual(record.stop_outcome, "recovery_term_exited")
+
+    async def test_restart_blocks_on_root_gone_recorded_survivor_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state, record = self._state_and_record(Path(temporary), status="incomplete")
+            record.pid = 4242
+            record.process_group = 4242
+            record.process_started_at = 123.0
+            record.stop_outcome = "shutdown_survivor_alive"
+            with (
+                patch(
+                    "orchestrator.daemon._exact_survivor",
+                    return_value=(None, "process_not_found"),
+                ),
+                patch("orchestrator.daemon.os.killpg", return_value=None),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "process group remains alive"):
+                    await state.reconcile_records(grace_seconds=0)
+
     def test_recovery_treats_group_eperm_as_still_existing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             _, record = self._state_and_record(Path(temporary), status="running")
