@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orchestrator.results import EvidenceStore
 from orchestrator.worktree import diff_text
 
 
@@ -22,6 +23,25 @@ def git(repository: Path, *arguments: str) -> str:
 
 
 class DiffEvidenceTests(unittest.TestCase):
+    def _repository_with_worktree(
+        self,
+        root: Path,
+        *,
+        source_name: str = "source",
+        initial_content: bytes = b"before\n",
+    ) -> tuple[Path, Path]:
+        source = root / source_name
+        worktree = root / "worktree"
+        source.mkdir()
+        git(source, "init")
+        git(source, "config", "user.email", "review@example.com")
+        git(source, "config", "user.name", "Review Test")
+        (source / "file.txt").write_bytes(initial_content)
+        git(source, "add", ".")
+        git(source, "commit", "-m", "initial")
+        git(source, "worktree", "add", "--detach", str(worktree), "HEAD")
+        return source, worktree
+
     def test_diff_includes_every_change_without_mutating_linked_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -88,6 +108,64 @@ class DiffEvidenceTests(unittest.TestCase):
         self.assertIn("diff --git a/empty.txt b/empty.txt", patch)
         self.assertIn("GIT binary patch", patch)
         self.assertNotIn("ignored.txt", patch)
+
+    def test_diff_preserves_non_utf8_bytes_through_evidence_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _source, worktree = self._repository_with_worktree(root)
+            (worktree / "file.txt").write_bytes(b"after secret \x80\n")
+
+            patch = diff_text(worktree)
+            patch_bytes = patch.encode("utf-8", errors="surrogateescape")
+            self.assertIn(b"+after secret \x80\n", patch_bytes)
+
+            evidence = EvidenceStore(root / "run")
+            evidence.write_diff(patch)
+            self.assertEqual((root / "run" / "diff.patch").read_bytes(), patch_bytes)
+
+            redacted = EvidenceStore(root / "redacted-run", secret="secret")
+            redacted.write_diff(patch)
+            redacted_bytes = (root / "redacted-run" / "diff.patch").read_bytes()
+            self.assertIn(b"+after [REDACTED] \x80\n", redacted_bytes)
+            self.assertNotIn(b"secret", redacted_bytes)
+
+    def test_diff_preserves_crlf_bytes_for_applicable_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, worktree = self._repository_with_worktree(
+                root, initial_content=b"before\r\nline\r\n"
+            )
+            (worktree / "file.txt").write_bytes(b"after\r\nline\r\n")
+
+            patch = diff_text(worktree)
+            patch_bytes = patch.encode("utf-8", errors="surrogateescape")
+            self.assertIn(b"-before\r\n", patch_bytes)
+            self.assertIn(b"+after\r\n", patch_bytes)
+            patch_path = root / "change.patch"
+            patch_path.write_bytes(patch_bytes)
+            checked = subprocess.run(
+                ["git", "apply", "--check", str(patch_path)],
+                cwd=source,
+                check=False,
+                capture_output=True,
+            )
+            self.assertEqual(
+                checked.returncode,
+                0,
+                checked.stderr.decode("utf-8", errors="replace"),
+            )
+
+    def test_diff_quotes_colon_in_git_object_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _source, worktree = self._repository_with_worktree(
+                root, source_name="source:repo"
+            )
+            (worktree / "file.txt").write_text("after\n", encoding="utf-8")
+
+            patch = diff_text(worktree)
+
+            self.assertIn("+after", patch)
 
 
 if __name__ == "__main__":

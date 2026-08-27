@@ -97,6 +97,13 @@ def _git_path(worktree: Path, name: str) -> Path:
     return value.resolve()
 
 
+def _quote_alternate_object_path(path: Path) -> str:
+    """Quote one Git alternate-object path without losing legal separators."""
+
+    value = str(path).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{value}"'
+
+
 def diff_text(worktree: Path) -> str:
     """Collect the complete uncommitted binary-capable diff for evidence.
 
@@ -104,6 +111,8 @@ def diff_text(worktree: Path) -> str:
     omits unstaged edits. Build a disposable index and object directory, stage
     the complete worktree there, and compare that snapshot to ``HEAD``. The
     worker's real index, status, and repository object database remain intact.
+    The returned text uses UTF-8 with ``surrogateescape`` so callers can
+    re-encode it without changing non-UTF-8 or newline bytes.
     """
 
     worktree = worktree.resolve()
@@ -124,7 +133,7 @@ def diff_text(worktree: Path) -> str:
         environment = os.environ.copy()
         environment["GIT_INDEX_FILE"] = str(temporary_index)
         environment["GIT_OBJECT_DIRECTORY"] = str(temporary_objects)
-        alternates = [str(object_path)]
+        alternates = [_quote_alternate_object_path(object_path)]
         inherited_alternates = environment.get("GIT_ALTERNATE_OBJECT_DIRECTORIES")
         if inherited_alternates:
             alternates.append(inherited_alternates)
@@ -136,10 +145,11 @@ def diff_text(worktree: Path) -> str:
             env=environment,
             check=False,
             capture_output=True,
-            text=True,
         )
         if staged.returncode:
-            detail = (staged.stderr or staged.stdout).strip()
+            detail = (staged.stderr or staged.stdout).decode(
+                "utf-8", errors="replace"
+            ).strip()
             raise WorktreeError(detail or "git add for evidence failed")
 
         result = subprocess.run(
@@ -157,9 +167,10 @@ def diff_text(worktree: Path) -> str:
             env=environment,
             check=False,
             capture_output=True,
-            text=True,
         )
         if result.returncode:
-            detail = (result.stderr or result.stdout).strip()
+            detail = (result.stderr or result.stdout).decode(
+                "utf-8", errors="replace"
+            ).strip()
             raise WorktreeError(detail or "git diff failed")
-        return result.stdout
+        return result.stdout.decode("utf-8", errors="surrogateescape")
