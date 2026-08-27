@@ -8,7 +8,6 @@ import json
 import os
 import plistlib
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -17,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 import venv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -26,6 +25,7 @@ APP_NAME = "Codex External Workers"
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 PERSISTENT_CONTROL_PORT = 49178
 LAUNCH_AGENT_LABEL = "com.aiworker.relay"
+CAPABILITY_HEADER = "X-AIworker-Capability"
 
 
 class RuntimeUpdateError(RuntimeError):
@@ -44,6 +44,7 @@ class DaemonSnapshot:
     reason: str | None = None
     persistent: bool = False
     project_root: str | None = None
+    capability: str | None = field(default=None, repr=False)
 
 
 def app_data_root() -> Path:
@@ -147,15 +148,21 @@ def _local_request(
     *,
     method: str = "GET",
     payload: dict[str, object] | None = None,
+    capability: str | None = None,
     timeout: float = 0.8,
 ) -> tuple[int, dict[str, Any] | None] | None:
     """Call the loopback daemon without inheriting a desktop proxy setting."""
 
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers: dict[str, str] = {}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    if capability:
+        headers[CAPABILITY_HEADER] = capability
     request = urllib.request.Request(
         f"{endpoint}{path}",
         data=data,
-        headers={"Content-Type": "application/json"} if data is not None else {},
+        headers=headers,
         method=method,
     )
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -194,8 +201,35 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
         return DaemonSnapshot("stale", pid=pid)
     if process_state is None:
         return DaemonSnapshot("unknown", pid=pid, reason="daemon PID cannot be inspected")
+    capability = record.get("capability")
+    if not isinstance(capability, str) or not capability:
+        return DaemonSnapshot(
+            "unknown",
+            pid=pid,
+            reason="daemon record has no capability",
+        )
+    project_root = record.get("project_root")
+    runtime_root = record.get("runtime_root")
+    version = record.get("version")
+    persistent = record.get("persistent")
+    if (
+        not isinstance(project_root, str)
+        or not project_root
+        or not isinstance(runtime_root, str)
+        or not isinstance(version, str)
+        or not isinstance(persistent, bool)
+        or Path(runtime_root).resolve()
+        != Path(project_root).resolve() / ".orch"
+    ):
+        return DaemonSnapshot(
+            "unknown",
+            pid=pid,
+            reason="daemon record has an incomplete identity",
+        )
     endpoint = f"http://127.0.0.1:{port}"
-    health_response = _local_request(endpoint, "/api/health")
+    health_response = _local_request(
+        endpoint, "/api/health", capability=capability
+    )
     if health_response is None:
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon health is unavailable")
     health_status, health = health_response
@@ -205,10 +239,15 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
         or health.get("ok") is not True
         or health.get("pid") != pid
         or health.get("port") != port
-        or not isinstance(health.get("version"), str)
+        or health.get("project_root") != project_root
+        or health.get("runtime_root") != runtime_root
+        or health.get("version") != version
+        or health.get("persistent") != persistent
     ):
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon health does not match its record")
-    overview_response = _local_request(endpoint, "/api/overview")
+    overview_response = _local_request(
+        endpoint, "/api/overview", capability=capability
+    )
     if overview_response is None or overview_response[0] != 200:
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon overview is unavailable")
     overview = overview_response[1]
@@ -233,10 +272,9 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
             else record.get("persistent") is True
         ),
         project_root=(
-            record["project_root"]
-            if isinstance(record.get("project_root"), str)
-            else None
+            project_root
         ),
+        capability=capability,
     )
 
 
@@ -254,21 +292,20 @@ def shutdown_idle_daemon(snapshot: DaemonSnapshot) -> None:
 
     if snapshot.state != "idle" or snapshot.pid is None or snapshot.endpoint is None:
         raise RuntimeUpdateError("cannot stop a daemon whose idle state is not verified")
-    response = _local_request(snapshot.endpoint, "/api/shutdown", method="POST", payload={})
+    response = _local_request(
+        snapshot.endpoint,
+        "/api/shutdown",
+        method="POST",
+        payload={},
+        capability=snapshot.capability,
+    )
     if response is None:
         latest = daemon_snapshot(app_data_root())
         if latest.state in {"missing", "stale"}:
             return
         raise RuntimeUpdateError("idle daemon stopped responding before it could be updated")
     status, _ = response
-    if status in {404, 405}:
-        # The first release bridge targets a verified old daemon which does
-        # not yet expose the narrow shutdown endpoint.  It has no active run.
-        try:
-            os.kill(snapshot.pid, signal.SIGTERM)
-        except OSError as exc:
-            raise RuntimeUpdateError(f"could not stop the idle daemon: {exc}") from exc
-    elif status == 409:
+    if status == 409:
         raise RuntimeUpdateError("runtime update deferred because an external run is now active")
     elif status != 200:
         raise RuntimeUpdateError("idle daemon refused its controlled shutdown")

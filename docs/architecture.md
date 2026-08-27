@@ -183,6 +183,7 @@ stateDiagram-v2
 ## 配置与秘密边界
 
 - 本地 Web 页面是生产配置 OpenRouter API key 与 profile 的入口；由固定 loopback `external-workersd` 服务。
+- daemon 每次启动生成一个仅写入用户 owner-only `daemon.json` 的随机 capability。浏览器 API 通过 host-only、HttpOnly、SameSite=Strict cookie 认证；CLI 与 launcher 通过 `X-AIworker-Capability` 认证，二者不混用。所有 API 请求都校验精确 loopback Host 与浏览器 Fetch Metadata；健康响应只返回 PID、端口、项目根、项目 `.orch` runtime 根、版本和 persistent 身份字段，不返回 capability。
 - 运行时为外部 run 生成隔离的 Codex 配置；不得复用主 Codex 的完整运行目录。
 - API key 由 `keyring` 写入系统密钥服务，不进仓库、不进 task packet、不在页面回显；没有可用密钥服务时不允许明文降级。
 - `.orch/` 保存项目级 run 元数据、证据与 detached worktree，并被 Git 忽略。

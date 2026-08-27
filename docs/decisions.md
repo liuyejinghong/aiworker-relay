@@ -519,3 +519,17 @@ The v0.1 CLI and UI do not expose per-run reasoning selection. Accepting an over
 Consequences:
 
 `POST /api/runs` and `DaemonState.create_run` reject any payload containing the `reasoning_effort` key, including `null` and an empty string, with `reasoning_override_not_supported` before packet loading or worktree creation. Normal runs use `Profile.default_reasoning`; `TaskPacket` and `RunRecord` persist the separate source as `profile_default` or `profile_auto`. Dispatch does not refresh the catalog in v0.1: it uses the Profile value validated and stored when the Profile was created, so provider catalog availability cannot silently change a run setting. Existing records without the source field remain readable.
+
+## D033 — Use one startup capability with separate browser and CLI modes
+
+Status:
+
+Accepted
+
+Reason:
+
+Loopback binding alone does not distinguish the AIworker daemon from another local service, and a browser page can send cross-site requests to loopback. The control plane needs one short-lived per-process capability while keeping the existing local-user trust boundary and without introducing accounts or a general authentication framework.
+
+Consequences:
+
+Each daemon startup generates a random capability and stores it only in owner-only `daemon.json`. A top-level document served from the exact `127.0.0.1` listener can receive it as a host-only HttpOnly SameSite=Strict cookie. CLI and launcher requests read the same file and send `X-AIworker-Capability`; a request cannot use both modes. API requests validate exact Host, Origin and Fetch Metadata, and JSON writes require `application/json`. Health exposes only non-secret identity fields (PID, port, project root, project `.orch` runtime root, version and persistent state). A live daemon record without a capability is unknown and cannot be reused, stopped, killed or overwritten; a dead PID is stale and may be replaced. The launcher has no direct signal fallback for an unavailable shutdown endpoint.

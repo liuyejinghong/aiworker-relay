@@ -212,6 +212,7 @@ class BootstrapSmokeTests(unittest.TestCase):
             "idle",
             pid=123,
             endpoint="http://127.0.0.1:49178",
+            capability="test-capability",
         )
         with (
             patch.object(launcher, "_local_request", return_value=(200, {})),
@@ -221,6 +222,66 @@ class BootstrapSmokeTests(unittest.TestCase):
             launcher.shutdown_idle_daemon(snapshot)
 
         wait_for_port.assert_called_once_with()
+
+    def test_launcher_marks_live_legacy_daemon_without_capability_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "daemon.json").write_text(
+                json.dumps({"pid": 123, "port": 49178}), encoding="utf-8"
+            )
+            with patch.object(launcher, "_process_state", return_value=True):
+                snapshot = launcher.daemon_snapshot(root)
+
+        self.assertEqual(snapshot.state, "unknown")
+        self.assertIn("capability", snapshot.reason or "")
+
+    def test_launcher_validates_identity_and_sends_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            record = {
+                "pid": 123,
+                "port": 61234,
+                "project_root": str(project.resolve()),
+                "runtime_root": str(project.resolve() / ".orch"),
+                "version": "0.1.0",
+                "persistent": True,
+                "capability": "test-capability",
+            }
+            (root / "daemon.json").write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(launcher, "_process_state", return_value=True),
+                patch.object(
+                    launcher,
+                    "_local_request",
+                    side_effect=[
+                        (200, {"ok": True, **{key: record[key] for key in record if key != "capability"}}),
+                        (200, {"runs": []}),
+                    ],
+                ) as request,
+            ):
+                snapshot = launcher.daemon_snapshot(root)
+
+        self.assertEqual(snapshot.state, "idle")
+        self.assertEqual(snapshot.capability, "test-capability")
+        self.assertEqual(request.call_args_list[0].kwargs["capability"], "test-capability")
+        self.assertEqual(request.call_args_list[1].kwargs["capability"], "test-capability")
+
+    def test_launcher_never_signals_a_daemon_for_missing_shutdown_endpoint(self) -> None:
+        snapshot = launcher.DaemonSnapshot(
+            "idle",
+            pid=123,
+            endpoint="http://127.0.0.1:49178",
+            capability="test-capability",
+        )
+        with (
+            patch.object(launcher, "_local_request", return_value=(404, {})),
+            patch.object(launcher, "_wait_for_exit") as wait_for_exit,
+        ):
+            with self.assertRaises(launcher.RuntimeUpdateError):
+                launcher.shutdown_idle_daemon(snapshot)
+        wait_for_exit.assert_not_called()
 
     def test_active_run_defers_runtime_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

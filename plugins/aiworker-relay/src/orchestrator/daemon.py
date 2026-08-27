@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import os
+import secrets
 import signal
 import shutil
 import ssl
@@ -73,6 +74,8 @@ GATEWAY_REASONING_EFFORTS = frozenset(
 )
 STATE_KEY = web.AppKey("state")
 STATIC_DIR_KEY = web.AppKey("static_dir")
+BROWSER_CAPABILITY_COOKIE = "aiworker_capability"
+CLI_CAPABILITY_HEADER = "X-AIworker-Capability"
 
 
 class APIError(Exception):
@@ -85,7 +88,157 @@ class APIError(Exception):
         self.status = status
 
 
+def _listener_port(request: web.Request, state: DaemonState) -> int | None:
+    """Return the actual local listener port, not the untrusted Host value."""
+
+    transport = request.transport
+    if transport is not None:
+        sockname = transport.get_extra_info("sockname")
+        if isinstance(sockname, (tuple, list)) and len(sockname) >= 2:
+            port = sockname[1]
+            if isinstance(port, int) and 1 <= port <= 65535:
+                return port
+    return state.port if isinstance(state.port, int) and state.port > 0 else None
+
+
+def _expected_origin(request: web.Request, state: DaemonState) -> str | None:
+    port = _listener_port(request, state)
+    return f"http://127.0.0.1:{port}" if port is not None else None
+
+
+def _validate_host_and_fetch_metadata(
+    request: web.Request, state: DaemonState
+) -> str | None:
+    """Reject aliases and cross-site browser requests before any API work."""
+
+    port = _listener_port(request, state)
+    expected_host = f"127.0.0.1:{port}" if port is not None else None
+    if expected_host is None or request.headers.get("Host") != expected_host:
+        raise APIError(
+            "invalid_host", "the local control address is not valid", status=403
+        )
+    if state.port is not None and port != state.port:
+        raise APIError(
+            "invalid_host", "the local control address is not valid", status=403
+        )
+
+    site = request.headers.get("Sec-Fetch-Site", "").strip().lower()
+    if site not in {"", "same-origin", "none"}:
+        raise APIError(
+            "invalid_fetch_metadata",
+            "cross-site requests are not accepted",
+            status=403,
+        )
+    origin = request.headers.get("Origin")
+    expected_origin = _expected_origin(request, state)
+    if origin is not None and origin != expected_origin:
+        raise APIError(
+            "invalid_origin", "the request origin is not accepted", status=403
+        )
+    return expected_origin
+
+
+def _authenticate(request: web.Request, state: DaemonState) -> str:
+    """Authenticate exactly one local client mode.
+
+    Browsers receive the capability only as an HttpOnly cookie. CLI and
+    launcher callers read the owner-only daemon record and send the same value
+    in a header. The modes are deliberately mutually exclusive.
+    """
+
+    header_value = request.headers.get(CLI_CAPABILITY_HEADER)
+    cookie_value = request.cookies.get(BROWSER_CAPABILITY_COOKIE)
+    if header_value is not None and cookie_value is not None:
+        raise APIError(
+            "unauthorized", "local capability authentication is invalid", status=401
+        )
+    provided = header_value if header_value is not None else cookie_value
+    if not provided or provided != state.capability:
+        raise APIError(
+            "unauthorized", "local capability authentication is required", status=401
+        )
+    return "cli" if header_value is not None else "browser"
+
+
+def _guard_request(request: web.Request, state: DaemonState) -> str | None:
+    """Apply the narrow loopback and browser metadata contract."""
+
+    expected_origin = _validate_host_and_fetch_metadata(request, state)
+    if not request.path.startswith("/api/"):
+        return None
+
+    mode = _authenticate(request, state)
+    fetch_site = request.headers.get("Sec-Fetch-Site", "").strip().lower()
+    fetch_mode = request.headers.get("Sec-Fetch-Mode", "").strip().lower()
+    fetch_dest = request.headers.get("Sec-Fetch-Dest", "").strip().lower()
+    if mode == "browser" and not fetch_site:
+        raise APIError(
+            "invalid_fetch_metadata",
+            "browser API requests must include Fetch Metadata",
+            status=403,
+        )
+    if mode == "browser" and not fetch_mode:
+        raise APIError(
+            "invalid_fetch_metadata",
+            "browser API requests must include Fetch Metadata",
+            status=403,
+        )
+    if fetch_mode and fetch_mode not in {"cors", "same-origin"}:
+        raise APIError(
+            "invalid_fetch_metadata",
+            "API requests must use a same-origin fetch",
+            status=403,
+        )
+    if mode == "browser" and not fetch_dest:
+        raise APIError(
+            "invalid_fetch_metadata",
+            "browser API requests must identify an empty destination",
+            status=403,
+        )
+    if fetch_dest and fetch_dest != "empty":
+        raise APIError(
+            "invalid_fetch_metadata",
+            "API requests cannot be used as a subresource",
+            status=403,
+        )
+    if request.method not in {"GET", "HEAD"} and mode == "browser":
+        if request.headers.get("Origin") != expected_origin:
+            raise APIError(
+                "invalid_origin", "write requests require the local origin", status=403
+            )
+    return mode
+
+
+def _set_browser_capability_cookie(response: web.StreamResponse, state: DaemonState) -> None:
+    """Issue the browser capability without making it script-readable."""
+
+    response.set_cookie(
+        BROWSER_CAPABILITY_COOKIE,
+        state.capability,
+        path="/",
+        httponly=True,
+        samesite="Strict",
+    )
+
+
+def _is_top_level_document(request: web.Request) -> bool:
+    """Identify a normal first-page navigation eligible for the cookie."""
+
+    if request.method != "GET":
+        return False
+    mode = request.headers.get("Sec-Fetch-Mode", "").strip().lower()
+    dest = request.headers.get("Sec-Fetch-Dest", "").strip().lower()
+    return mode in {"", "navigate"} and dest in {"", "document"}
+
+
 async def _json_body(request: web.Request) -> dict[str, Any]:
+    media_type = request.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    if media_type != "application/json":
+        raise APIError(
+            "invalid_content_type",
+            "request body must use application/json",
+            status=415,
+        )
     try:
         value = await request.json()
     except Exception as exc:
@@ -328,6 +481,7 @@ class DaemonState:
         self.pid = os.getpid()
         self.port: int | None = None
         self.persistent = persistent
+        self.capability = secrets.token_urlsafe(32)
         self._load_records()
 
     def _load_records(self) -> None:
@@ -356,17 +510,48 @@ class DaemonState:
             "pid": self.pid,
             "port": self.port,
             "project_root": str(self.project_root),
+            "runtime_root": str(self.runtime_root),
             "started_at": utc_now(),
             "version": __version__,
             "persistent": self.persistent,
+            "capability": self.capability,
         }
 
     def write_daemon_file(self) -> None:
-        atomic_write_json(self.app_paths.daemon_file, self._daemon_record())
+        daemon_file = self.app_paths.daemon_file
+        existing = read_json(daemon_file)
+        if existing is None and daemon_file.exists():
+            raise RuntimeError("cannot replace an invalid daemon.json")
+        if isinstance(existing, dict):
+            existing_pid = existing.get("pid")
+            if not isinstance(existing_pid, int) or existing_pid <= 0:
+                raise RuntimeError("cannot replace an invalid daemon.json")
+            try:
+                os.kill(existing_pid, 0)
+            except ProcessLookupError:
+                pass
+            except PermissionError as exc:
+                raise RuntimeError(
+                    "cannot replace daemon.json while its recorded PID is inaccessible"
+                ) from exc
+            except OSError:
+                pass
+            else:
+                raise RuntimeError(
+                    "cannot replace daemon.json while its recorded daemon is active"
+                )
+        elif existing is not None:
+            raise RuntimeError("cannot replace an invalid daemon.json")
+        atomic_write_json(daemon_file, self._daemon_record())
+        os.chmod(daemon_file, 0o600)
 
     def clear_daemon_file(self) -> None:
         value = read_json(self.app_paths.daemon_file)
-        if isinstance(value, dict) and value.get("pid") == self.pid:
+        if (
+            isinstance(value, dict)
+            and value.get("pid") == self.pid
+            and value.get("capability") == self.capability
+        ):
             self.app_paths.daemon_file.unlink(missing_ok=True)
 
     def _persist(self, record: RunRecord) -> None:
@@ -766,8 +951,10 @@ class DaemonState:
 
 def _route(handler):
     async def wrapped(request: web.Request) -> web.StreamResponse:
-        request.app[STATE_KEY].touch()
+        state: DaemonState = request.app[STATE_KEY]
         try:
+            _guard_request(request, state)
+            state.touch()
             return await handler(request)
         except APIError as exc:
             return _json_error(exc)
@@ -783,6 +970,8 @@ async def _health(request: web.Request) -> web.Response:
             "version": __version__,
             "pid": state.pid,
             "port": state.port,
+            "project_root": str(state.project_root),
+            "runtime_root": str(state.runtime_root),
             "persistent": state.persistent,
         }
     )
@@ -912,6 +1101,7 @@ async def _stop(request: web.Request) -> web.Response:
 
 
 async def _shutdown(request: web.Request) -> web.Response:
+    await _json_body(request)
     return web.json_response(request.app[STATE_KEY].request_idle_shutdown())
 
 
@@ -919,11 +1109,33 @@ async def _index(request: web.Request) -> web.StreamResponse:
     static_dir = request.app[STATIC_DIR_KEY]
     index = static_dir / "index.html"
     if index.exists():
-        return web.FileResponse(index)
-    return web.Response(
-        text="<!doctype html><title>AIworker Relay</title><p>AIworker Relay is running.</p>",
-        content_type="text/html",
-    )
+        response = web.FileResponse(index)
+    else:
+        response = web.Response(
+            text="<!doctype html><title>AIworker Relay</title><p>AIworker Relay is running.</p>",
+            content_type="text/html",
+        )
+    if _is_top_level_document(request):
+        _set_browser_capability_cookie(response, request.app[STATE_KEY])
+    return response
+
+
+async def _static(request: web.Request) -> web.StreamResponse:
+    """Serve the replaceable static bundle with a safe path boundary."""
+
+    static_dir = request.app[STATIC_DIR_KEY].resolve()
+    relative = request.match_info.get("path", "")
+    candidate = (static_dir / relative).resolve()
+    try:
+        candidate.relative_to(static_dir)
+    except ValueError as exc:
+        raise web.HTTPNotFound() from exc
+    if not candidate.is_file():
+        raise web.HTTPNotFound()
+    response = web.FileResponse(candidate)
+    if candidate.suffix.lower() == ".html" and _is_top_level_document(request):
+        _set_browser_capability_cookie(response, request.app[STATE_KEY])
+    return response
 
 
 def create_app(
@@ -952,9 +1164,9 @@ def create_app(
     app.router.add_post("/api/shutdown", _route(_shutdown))
     resolved_static_dir = app[STATIC_DIR_KEY]
     if resolved_static_dir.is_dir():
-        # Keep the frontend a replaceable static bundle.  API routes are
+        # Keep the frontend a replaceable static bundle. API routes are
         # registered first; this catch-all only serves existing asset files.
-        app.router.add_static("/", resolved_static_dir, show_index=False)
+        app.router.add_get("/{path:.*}", _route(_static))
     return app
 
 
