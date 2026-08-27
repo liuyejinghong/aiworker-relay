@@ -33,7 +33,7 @@
 - OpenRouter API key 的生产配置入口在本地 Web UI；仓库与运行日志不得保存 key。
 - 添加外部 worker 是模型发现流程：用户粘贴 OpenRouter 模型标识或模型页链接，系统查询当前模型目录、让用户处理歧义匹配，并自动带入当前 metadata；它不是 API key 设置入口。
 - 模型目录收录只证明模型当前可发现，不等于外部 harness 已兼容。新 profile 必须把“已识别”与“本机尚未验证”分开；添加时不自动发起会消耗额度的任务。
-- 每个外部 worker profile 有用户确认的默认推理策略，只能从该模型实际支持的档位中选择。任务未指定档位时，Codex 必须按固定默认值派发；用户明确指定档位优先。只有 profile 被用户设为“自动”时，Codex 才可选择档位。
+- 每个外部 worker profile 有用户确认的默认推理策略，只能从该模型实际支持的档位中选择。v0.1 的 CLI/UI 不提供 per-run reasoning 选择；run payload 若包含 `reasoning_effort` key（包括 `null` 或空字符串）必须稳定返回 `reasoning_override_not_supported`，并只使用 Profile 默认值。Profile 值为 `auto` 时记录为 `profile_auto`，固定值记录为 `profile_default`。
 - 产品保持本地、轻量、CLI first；Web 看板是运行控制面，不是远程 SaaS。
 - 首版跨平台目标是 macOS、Windows 和具备系统密钥服务的桌面 Linux。
 - 本地控制面是单个持久 `external-workersd`：Python 3.12+、`asyncio` 与 `aiohttp`；同一进程服务本机 Web、SSE、状态 API 与外部 run 监管。它固定绑定 loopback `127.0.0.1:49178`；macOS 的 setup 将该同一进程注册为用户级 LaunchAgent。一个活跃 daemon 绑定一个项目根目录；第二个项目不得静默复用它。

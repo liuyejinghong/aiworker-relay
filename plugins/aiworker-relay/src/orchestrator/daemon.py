@@ -556,6 +556,11 @@ class DaemonState:
                 blocker,
                 "unverified profile requires explicit experimental confirmation",
             )
+        if "reasoning_effort" in payload:
+            raise APIError(
+                "reasoning_override_not_supported",
+                "per-run reasoning override is not supported; use the profile default",
+            )
         api_key = self._key()
         if not api_key:
             raise APIError("missing_key", "OpenRouter API key is not configured")
@@ -564,15 +569,18 @@ class DaemonState:
             raise APIError("invalid_packet", "packet_path is required")
         packet_path = Path(packet_value).expanduser()
         run_id = uuid.uuid4().hex
+        reasoning_effort = profile.default_reasoning
+        reasoning_source = (
+            "profile_auto" if reasoning_effort == "auto" else "profile_default"
+        )
         try:
             packet = load_packet(
                 packet_path,
                 run_id=run_id,
                 profile_id=profile.id,
                 profile_model=profile.model,
-                reasoning_effort=str(
-                    payload.get("reasoning_effort") or profile.default_reasoning
-                ),
+                reasoning_effort=reasoning_effort,
+                reasoning_source=reasoning_source,
                 selection_source=selection_source,
             )
         except PacketValidationError as exc:
@@ -593,9 +601,8 @@ class DaemonState:
             run_id=run_id,
             profile_id=profile.id,
             model=profile.model,
-            reasoning_effort=str(
-                payload.get("reasoning_effort") or profile.default_reasoning
-            ),
+            reasoning_effort=reasoning_effort,
+            reasoning_source=reasoning_source,
             status="created",
             created_at=utc_now(),
             updated_at=utc_now(),

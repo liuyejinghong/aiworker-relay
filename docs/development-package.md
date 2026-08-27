@@ -60,7 +60,7 @@ Task Packet 是面向 worker 的最小 Markdown 文档，不是模型强制 sche
 | `existing_behavior` 与 `expected_behavior` | 已知事实与预期结果；纯探索任务可明确写为不适用。 |
 | `constraints` | 工具、依赖、外部访问、数据边界和时间限制。 |
 | `acceptance_criteria` 与 `verification` | Codex 最终判断所需证据。 |
-| `profile`、`reasoning_effort` 与 `selection_source` | 本次模型和推理策略的实际来源。 |
+| `profile`、`reasoning_effort`、`reasoning_source` 与 `selection_source` | 本次模型和推理策略的实际来源；v0.1 只接受 Profile 默认值，固定值来源为 `profile_default`，`auto` 来源为 `profile_auto`。 |
 | `workspace` | worktree 路径、`HEAD` 与 dirty 源工作区提示。 |
 
 Run Evidence 由 `external-workersd` 产生或采集，而不是相信模型自行填报。其最小内容是 `events.jsonl`、`last-message.md`、`run.json`、`diff.patch`、变更文件清单、退出状态、RSS 样本、停止请求和停止结果。模型最后消息可以补充摘要、测试和未决问题，但它不是唯一事实来源。
