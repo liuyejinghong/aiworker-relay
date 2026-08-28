@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.18 为当前已安装的 pre-release 源码候选。官方 launcher 已将 bundle/runtime/daemon 收敛到 v0.1.18；用户授权的 NVIDIA run `b221a85785fd4cf6b618f07ca416068d` 完成唯一 marker 写入与 diff/files 回读，并由 managed TERM 以 `term_exited`、退出码 0 收敛。v0.1.17 在 Provider 前暴露的 strict-config project-trust override 缺陷已由该安装态 run 闭环。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
+状态：v0.1.19 为当前源码候选；v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 把 source fingerprint 纳入 bundle/runtime/daemon 收敛，但尚未安装、打 tag 或发布。v0.1.17 在 Provider 前暴露的 strict-config project-trust override 缺陷已由 v0.1.18 安装态 run `b221a85785fd4cf6b618f07ca416068d` 闭环。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
 
 ## 为什么需要这一项
 
@@ -9,7 +9,7 @@ AIworker Relay 有两个独立但必须保持一致的交付物：
 1. Codex Plugin bundle：manifest、Skill、bootstrap launcher、Python 源码与静态看板资源；
 2. 用户应用数据目录中的专用 Python runtime：实际运行 `orch` 与 `external-workersd` 的 venv。
 
-2026-08-26 的本机核验已经证明两者会分离：已安装 Plugin 为 `0.1.1`，而应用级 `orch version` 为 `0.1.0`。当时的 launcher 只在 runtime 缺失时执行安装；已有 venv 时会直接复用旧 `orch`。当前 launcher 已改为比较并报告三者版本，只在显式 setup 且 daemon 确认空闲时执行可恢复替换。
+2026-08-26 的本机核验已经证明两者会分离：已安装 Plugin 为 `0.1.1`，而应用级 `orch version` 为 `0.1.0`。当时的 launcher 只在 runtime 缺失时执行安装；已有 venv 时会直接复用旧 `orch`。后续 version 收敛修复了正常 bump 路径，但不能识别同 version / 不同 source。v0.1.19 同时比较并报告 human version 与 source fingerprint，只在显式 setup 且 daemon 确认空闲时执行可恢复替换。
 
 这不是单纯的版本显示问题：新 Skill、看板和 runtime 的行为可能不再匹配，用户也无法从当前界面看出这个状态。
 
@@ -19,7 +19,7 @@ AIworker Relay 有两个独立但必须保持一致的交付物：
 
 - 用户先通过 Codex 的正常 Plugin 渠道获得新 bundle，再显式执行一次 `$aiworker-relay setup`；无需接触 pip、venv 或 API Key。
 - setup 只在没有活跃 external run 时替换应用级 runtime；绝不为升级停止、重启或改变正在工作的 worker。
-- 更新后 bundle、runtime 和 daemon 都能报告同一个 release version；看板与 setup 输出都能说明实际结果。
+- 更新后 bundle、runtime 和 daemon 都能报告同一个 release version 与 source fingerprint；看板与 setup 输出都能说明实际结果。
 - Profile、系统钥匙串中的 OpenRouter Key 与项目 `.orch/` 证据在无 schema 变化的更新中原样保留。
 - 安装失败或中断后，上一可用 runtime 能被恢复；失败必须可见，而不是悄悄留下半安装环境。
 
@@ -37,6 +37,9 @@ AIworker Relay 有两个独立但必须保持一致的交付物：
 | bundle version | Plugin manifest 所声明的 release version | Codex 安装面识别的新 bundle |
 | runtime version | 已安装 `orch version` | launcher 判断实际 venv 是否需要更新 |
 | daemon version | `/api/health` 与 `/api/overview` | 确认正在服务看板的代码版本 |
+| bundle source fingerprint | launcher 对唯一 Plugin source 的实际分发文件计算 | 检测同 version / 不同 source；与稳定 release 的 Git SHA 证据绑定 |
+| runtime source fingerprint | venv 根目录的 `.aiworker-release.json` | 记录该 runtime 实际从哪个 bundle 内容安装 |
+| daemon source fingerprint | `daemon.json`、`/api/health` 与 `/api/overview` | 确认当前进程与 installed runtime 身份一致 |
 | profile schema version | `profiles.json` 内的版本字段，当前为 `1` | 仅在持久化 Profile 格式改变时决定是否迁移 |
 
 实现使用 Python package 内的单一 `src/orchestrator/VERSION` 文件：
@@ -45,7 +48,7 @@ AIworker Relay 有两个独立但必须保持一致的交付物：
 - source-tree 与安装后的 `orch version` 都从该文件派生；
 - `plugin.json` 的 `version` 是经测试校验的 release 镜像，不再由人手独立维护。
 
-release 检查必须拒绝 `VERSION`、manifest 与已构建 package 三者不一致的包。此项只消除当前已有的三个手工版本点，不引入通用版本管理框架。
+release 检查必须拒绝 `VERSION`、manifest 与已构建 package 三者不一致的包。source fingerprint 覆盖 manifest、Skill、launcher、runtime source 与静态 UI，排除 Python bytecode、build 目录和 egg metadata 等 setup 可再生文件。它直接参与更新判定，不单独生成仓库 checksum 文件。
 
 ## 正常用户流程
 
@@ -55,10 +58,10 @@ Codex Marketplace / Plugin UI
         ▼
 用户在新 task 执行 $aiworker-relay setup
         │
-        ├─ bundle version = runtime version，且 daemon 匹配固定持久入口
+        ├─ bundle version + fingerprint = runtime，且 daemon 匹配固定持久入口
         │      └─ 正常打开或复用看板
         │
-        └─ bundle version ≠ runtime version
+        └─ version 或 fingerprint 不一致 / identity 缺失
                │
                ├─ 有活跃 external run 或状态无法可靠判断
                │      └─ 不更新、不杀进程；明确报告“更新等待当前任务结束”
@@ -75,9 +78,9 @@ Codex Marketplace / Plugin UI
 
 | 状态 | 判定 | 可执行动作 |
 | --- | --- | --- |
-| `up_to_date` | bundle、runtime、健康 daemon（若存在）版本一致，且 daemon 位于固定持久入口 | 正常 setup / dispatch |
+| `up_to_date` | bundle、runtime、健康 daemon（若存在）的 version 与 fingerprint 一致，且 daemon 位于固定持久入口 | 正常 setup / dispatch |
 | `runtime_missing` | 没有可用专用 venv | setup 创建首次 runtime |
-| `update_required` | runtime 缺失、无法执行 version、版本不同，或存在待完成的 `venv.previous` 事务 marker | setup 进入更新判定 |
+| `update_required` | runtime 缺失、无法读取 version/fingerprint、任一身份不同，或存在待完成的 `venv.previous` 事务 marker | setup 进入更新判定 |
 | `update_deferred_active_run` | 受健康检查确认的 daemon 有 `starting`、`running` 或 `stopping` external run | 保留原 runtime 与进程；报告需在 run 结束后重新 setup |
 | `update_blocked_unknown_daemon` | daemon PID 存在，但 health / overview 与记录不一致或无法确认活跃状态 | 不替换 runtime；报告恢复阻塞，避免误杀未知进程 |
 | 更新失败后已恢复 | 新 runtime 未通过安装、version 或 health 检查，旧 runtime 已恢复 | setup 明确报告恢复结果与失败原因 |
@@ -92,11 +95,11 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 当前版本使用一条有界的恢复路径：
 
-1. launcher 从新 bundle 的 package `VERSION` 与现有 `orch version` 读取目标和现状；不依赖全局 Python 依赖。
+1. launcher 从新 bundle 读取 package `VERSION` 并计算 source fingerprint，从现有 `orch version` 与 venv release identity 读取现状；不依赖全局 Python 依赖。
 2. 若有 daemon，先以 `daemon.json`、`/api/health` 和 `/api/overview` 交叉确认它就是本产品的 daemon，且没有活跃 external run。
 3. 只在该判定成立时，使用记录中的 capability 请求 idle daemon 正常退出；不再为缺少该控制动作的旧 daemon 直接发送信号。macOS 的 LaunchAgent 将受控退出视为一次正常退出，直到新 runtime 就绪后才重新启动同一 daemon；旧记录没有 capability 时保持 unknown 并阻塞更新。
-4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv` 并从当前 Plugin bundle 安装 runtime；安装和版本检查失败时沿用现有行为立即恢复旧 runtime，成功后仍保留该 marker。若此前已停止 verified-idle daemon，也要用恢复后的旧 runtime 重启并校验持久控制面。
-5. 由持久 entry、daemon 启动和权威最终校验共同接受 candidate。最终校验必须确认预期 bundle version、固定 `127.0.0.1:49178` endpoint、`persistent`、以及当前项目 `project_root`；全部通过后才删除 `venv.previous`。
+4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv` 并从当前 Plugin bundle 安装 runtime；安装和版本检查通过后写入 version-bound source fingerprint，失败时立即恢复旧 runtime，成功后仍保留该 marker。若此前已停止 verified-idle daemon，也要用恢复后的旧 runtime 重启并校验持久控制面。
+5. 由持久 entry、daemon 启动和权威最终校验共同接受 candidate。最终校验必须确认预期 bundle version、source fingerprint、固定 `127.0.0.1:49178` endpoint、`persistent`、以及当前项目 `project_root`；全部通过后才删除 `venv.previous`。
 6. 任一 post-install 步骤失败时，只有已验证 idle 的 daemon 才能通过 capability-gated shutdown 停止；随后恢复旧 runtime、用旧 runtime 重启持久控制面并校验旧 version、endpoint、persistent 和 `project_root`。若 daemon active 或 unknown，则不停止、不删除任一目录，明确报告 deferred / blocked。
 
 如果进程在第 4 至第 5 步之间被中断，下一次 setup 按 `venv.previous` marker 做确定性恢复：只有 `venv.previous` 时直接恢复；两目录中 candidate 已完整接受且 idle 时提交删除 marker，active 时延后清理；未接受的 candidate 在 active 时延后、unknown 时阻塞、idle 时受控停止后恢复旧 runtime，missing/stale 时直接恢复。该临时备份只解决一次更新事务的失败恢复，不形成长期多版本管理系统。
@@ -122,11 +125,13 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 
 local marketplace 只用于源码开发、私有测试，不应被描述为普通开发者的安装或更新渠道。OpenAI 官方文档明确说明：`marketplace upgrade` 的文档语义是刷新 Git marketplace snapshot，而不是保证已安装 Plugin 自动升级。[OpenAI 插件打包文档](https://developers.openai.com/plugins/build/plugins)
 
-Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：确认新 manifest 是否出现、已安装 Plugin 如何切换到新版本、随后 setup 是否把 runtime 收敛到相同版本。没有观察到的 UI 能力不写入用户说明。
+Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：确认新 manifest 是否出现、已安装 Plugin 如何切换到新版本、随后 setup 是否把 runtime 收敛到相同 version 与 fingerprint。没有观察到的 UI 能力不写入用户说明。
 
 ### 面向正常开发者的渠道（推荐）
 
-在 local alpha 验收后，使用同一仓库或专门 marketplace 仓库的 Git-backed marketplace。官方格式可将 Plugin 子目录作为 `git-subdir` source，并以受控的 Git ref 提供更新来源。[OpenAI 插件打包文档](https://developers.openai.com/plugins/build/plugins)
+在 local alpha 验收后，使用同一仓库或专门 marketplace 仓库的 Git-backed marketplace。官方格式可将 Plugin 子目录作为 `git-subdir` source，并使用 `ref` 或 `sha` selector。[OpenAI 插件打包文档](https://developers.openai.com/plugins/build/plugins)
+
+`main` 继续只代表明确可变的 pre-release。稳定渠道的 release catalog 必须在一个独立、受保护的 channel/tag commit 中，把 Plugin source 指向已经通过 required checks 的精确 Git SHA；发布证据同时记录该 SHA、安装后 fingerprint 与依赖锁身份。这样 Git SHA 负责审查 provenance，fingerprint 负责本机 bytes 收敛，两者不是互相替代的平行版本系统。该仓库设置、stable ref、tag 与 Release 尚未创建。
 
 推荐产品动作保持两步：
 
@@ -173,7 +178,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 
 下一开发包完成的判定不是“增加了 update 命令”，而是以下事实同时成立：
 
-1. 同一 bundle 的 manifest、`orch version` 与健康 daemon 版本一致；
+1. 同一 bundle 的 manifest、`orch version` 与健康 daemon version + source fingerprint 一致；
 2. 当前已观察到的 `0.1.1` bundle / `0.1.0` runtime 漂移可通过一次 setup 收敛；
 3. 一个活跃 external run 不会被更新流程停止、重启或迁移；
 4. 更新失败后上一 runtime 可重新 setup，Profile 与 Key 不丢失；

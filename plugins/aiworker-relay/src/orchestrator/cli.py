@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from orchestrator import __version__
+from orchestrator import __version__, runtime_source_fingerprint
 from orchestrator.config import AppPaths
 
 
@@ -90,12 +90,22 @@ def _health(
             return False
         if expected is None:
             return True
+        runtime_fingerprint = runtime_source_fingerprint()
+        expected_fingerprint = expected.get("source_fingerprint")
+        if (
+            not isinstance(runtime_fingerprint, str)
+            or not runtime_fingerprint
+            or not isinstance(expected_fingerprint, str)
+            or not expected_fingerprint
+        ):
+            return False
         required = (
             "pid",
             "port",
             "project_root",
             "runtime_root",
             "version",
+            "source_fingerprint",
             "persistent",
         )
         if any(key not in value for key in required):
@@ -103,7 +113,10 @@ def _health(
         for key in required:
             if value.get(key) != expected.get(key):
                 return False
-        return value.get("version") == __version__
+        return (
+            value.get("version") == __version__
+            and value.get("source_fingerprint") == runtime_fingerprint
+        )
     except (OSError, urllib.error.URLError, json.JSONDecodeError):
         return False
 
@@ -118,6 +131,8 @@ def _record_expected(
     recorded_project_root = record.get("project_root")
     runtime_root = record.get("runtime_root")
     version = record.get("version")
+    source_fingerprint = record.get("source_fingerprint")
+    runtime_fingerprint = runtime_source_fingerprint()
     record_persistent = record.get("persistent")
     capability = record.get("capability")
     if (
@@ -131,6 +146,10 @@ def _record_expected(
         or not recorded_project_root
         or not isinstance(runtime_root, str)
         or not isinstance(version, str)
+        or not isinstance(source_fingerprint, str)
+        or not source_fingerprint
+        or not isinstance(runtime_fingerprint, str)
+        or not runtime_fingerprint
         or not isinstance(record_persistent, bool)
         or not isinstance(capability, str)
         or not capability
@@ -142,6 +161,8 @@ def _record_expected(
         return None
     if version != __version__:
         return None
+    if source_fingerprint != runtime_fingerprint:
+        return None
     if record_persistent is not expected_persistent:
         return None
     return {
@@ -150,6 +171,7 @@ def _record_expected(
         "project_root": str(requested_project_root),
         "runtime_root": str(requested_project_root / ".orch"),
         "version": version,
+        "source_fingerprint": source_fingerprint,
         "persistent": record_persistent,
     }
 

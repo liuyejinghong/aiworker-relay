@@ -454,7 +454,7 @@ Updating on every dispatch, adding a background update watcher, leaving runtime 
 
 Consequences:
 
-`$aiworker-relay setup` compares the canonical package version with runtime and daemon versions. It replaces only a verified idle runtime, keeps one short-lived `venv.previous` recovery copy, and refuses dispatch while versions differ. An active run produces an explicit deferred result; an unknown daemon state blocks setup rather than risking an unrelated process.
+`$aiworker-relay setup` compares the canonical package version and source fingerprint with runtime and daemon identities. It replaces only a verified idle runtime, keeps one short-lived `venv.previous` recovery copy, and refuses dispatch while either identity differs. An active run produces an explicit deferred result; an unknown daemon state blocks setup rather than risking an unrelated process. D039 defines the source fingerprint contract.
 
 ## D029 — Use a Git-backed marketplace for public pre-release distribution
 
@@ -532,7 +532,7 @@ Loopback binding alone does not distinguish the AIworker daemon from another loc
 
 Consequences:
 
-Each daemon startup generates a random capability and stores it only in owner-only `daemon.json`. A top-level document served from the exact `127.0.0.1` listener can receive it as a host-only HttpOnly SameSite=Strict cookie. CLI and launcher requests read the same file and send `X-AIworker-Capability`; a request cannot use both modes. API requests validate exact Host, Origin and Fetch Metadata, JSON writes require `application/json`, and capability-bearing local clients never follow HTTP redirects. Health exposes only non-secret identity fields (PID, port, project root, project `.orch` runtime root, version and persistent state). A live daemon record without a capability is unknown and cannot be reused, stopped, killed or overwritten; a dead PID is stale and may be replaced. Daemon record claim and cleanup use one short advisory lock so concurrent startup cannot overwrite another live record. The launcher has no direct signal fallback for an unavailable shutdown endpoint, and it unloads a loaded LaunchAgent without a live record only after the same setup transaction has just stopped a verified idle daemon.
+Each daemon startup generates a random capability and stores it only in owner-only `daemon.json`. A top-level document served from the exact `127.0.0.1` listener can receive it as a host-only HttpOnly SameSite=Strict cookie. CLI and launcher requests read the same file and send `X-AIworker-Capability`; a request cannot use both modes. API requests validate exact Host, Origin and Fetch Metadata, JSON writes require `application/json`, and capability-bearing local clients never follow HTTP redirects. Health exposes only non-secret identity fields (PID, port, project root, project `.orch` runtime root, version, source fingerprint and persistent state). A live daemon record without a capability is unknown and cannot be reused, stopped, killed or overwritten; a dead PID is stale and may be replaced. Daemon record claim and cleanup use one short advisory lock so concurrent startup cannot overwrite another live record. The launcher has no direct signal fallback for an unavailable shutdown endpoint, and it unloads a loaded LaunchAgent without a live record only after the same setup transaction has just stopped a verified idle daemon.
 
 The accepted v0.1 threat boundary trusts local processes that can issue arbitrary raw loopback HTTP. Browser cookies are host-scoped rather than port-scoped, so the cookie gate is a hostile-browser-origin and CSRF control, not isolation from another local process that can observe `127.0.0.1` cookies. CLI/launcher capability checks still prevent accidental or unrelated service reuse. Protecting against hostile local processes would require a different browser bootstrap or IPC boundary and is not claimed.
 
@@ -606,4 +606,24 @@ Consequences:
 
 Each external run selects a deny-by-default `aiworker` permission profile from an isolated `CODEX_HOME`. The profile grants the detached worktree and run HOME write access, grants only required toolchain and linked-worktree Git metadata roots read access, disables tool network, isolates HOME / TMP / XDG, and gives spawned tools an explicit environment with `inherit="none"` and `OPENROUTER_API_KEY` excluded. The source checkout index and worktree `.env*` are denied. The daemon writes the worktree trust entry into that isolated config before project configuration can load; login shell, permission profile, shell policy, selected model and fixed reasoning remain pinned at CLI precedence. `--approve-for-me` remains the non-interactive approval mechanism; the dangerous bypass is not used.
 
-This is not a claim that the external worker cannot access any host path. On current supported macOS Codex runtimes, ordinary sandboxed shell processes can still read and write shared system scratch directories despite permission-profile deny entries. Source checkout and real HOME probes are denied, but host temp remains a known pre-release security boundary tracked by Issues #1 and #2. The run-scoped profile must not be described as complete host isolation until that live sentinel passes on the installed runtime.
+This is not a claim that the external worker cannot access any host path. On current supported macOS Codex runtimes, ordinary sandboxed shell processes can still read and write shared system scratch directories despite permission-profile deny entries. Source checkout and real HOME probes are denied, but host temp remains a known pre-release security boundary tracked by Issue #2. The run-scoped profile must not be described as complete host isolation until that live sentinel passes on the installed runtime.
+
+## D039 — Bind runtime convergence to distributed source bytes
+
+Status: Accepted
+
+Reason:
+
+Human version text cannot distinguish two Plugin bundles whose source changed without a synchronized version bump. Codex's documented Git marketplace format can select an exact source SHA, but the installed Plugin copy does not expose that Git checkout as a supported runtime interface. The local convergence decision therefore needs an identity derived from the actual bundle it is installing, while stable provenance still needs the reviewed Git SHA.
+
+Alternatives considered:
+
+Continuing to compare version only, reading Codex's internal `.tmp/marketplaces` Git checkout, embedding a commit's own SHA inside that same commit, or writing an unused checksum artifact were not accepted. The internal marketplace snapshot is not a documented Plugin runtime contract, self-embedding a commit SHA is circular, and an identity that does not change setup behavior would add evidence without fixing freshness.
+
+Consequences:
+
+The launcher computes one deterministic `sha256` fingerprint over all distributed files under the installable Plugin root, including manifest, Skill, launcher, runtime source and static UI. It excludes only setup-generated bytecode, build directories and package metadata. A successful install writes the version-bound fingerprint to `.aiworker-release.json` at the venv root. The runtime and daemon expose the same non-secret fingerprint through daemon record, health and overview.
+
+`setup` and `dispatch` require version and fingerprint agreement across bundle, installed runtime and daemon. Same-version/different-source and a legacy runtime with no identity both require setup; an active run still defers replacement. A failed candidate may restore a legacy known-good runtime without fabricating a fingerprint, but that runtime remains update-required on the next normal check.
+
+This fingerprint is the local content identity used by the stable release boundary, not a substitute for Git provenance. A future stable catalog must select an exact reviewed Git SHA (the official marketplace format permits a `sha` selector), and release evidence must record that SHA together with the resulting Plugin fingerprint and accepted dependency set. No tag, stable channel, branch protection or GitHub Release is created by this decision alone.

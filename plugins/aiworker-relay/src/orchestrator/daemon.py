@@ -32,7 +32,7 @@ from aiohttp import web
 import psutil
 import truststore
 
-from orchestrator import __version__
+from orchestrator import __version__, runtime_source_fingerprint
 from orchestrator.config import (
     AppPaths,
     KeyringUnavailable,
@@ -769,6 +769,7 @@ class DaemonState:
             "runtime_root": str(self.runtime_root),
             "started_at": utc_now(),
             "version": __version__,
+            "source_fingerprint": runtime_source_fingerprint(),
             "persistent": self.persistent,
             "capability": self.capability,
         }
@@ -1562,6 +1563,7 @@ class DaemonState:
         active = set(active_run_ids)
         return {
             "version": __version__,
+            "source_fingerprint": runtime_source_fingerprint(),
             "profiles": [
                 self._profile_payload(profile) for profile in self.profiles.all()
             ],
@@ -2390,6 +2392,7 @@ async def _health(request: web.Request) -> web.Response:
         {
             "ok": True,
             "version": __version__,
+            "source_fingerprint": runtime_source_fingerprint(),
             "pid": state.pid,
             "port": state.port,
             "project_root": str(state.project_root),

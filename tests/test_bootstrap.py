@@ -24,6 +24,7 @@ assert LAUNCHER_SPEC and LAUNCHER_SPEC.loader
 launcher = module_from_spec(LAUNCHER_SPEC)
 sys.modules[LAUNCHER_SPEC.name] = launcher
 LAUNCHER_SPEC.loader.exec_module(launcher)
+TEST_FINGERPRINT = "sha256:" + "a" * 64
 
 
 class BootstrapSmokeTests(unittest.TestCase):
@@ -60,6 +61,87 @@ class BootstrapSmokeTests(unittest.TestCase):
         self.assertEqual(__version__, expected)
         self.assertEqual(manifest["version"], expected)
         self.assertIn('version = {file = ["src/orchestrator/VERSION"]}', pyproject)
+
+    def test_bundle_fingerprint_ignores_bytecode_and_changes_with_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "src/orchestrator/module.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            with patch.object(launcher, "SOURCE_ROOT", root):
+                initial = launcher.bundle_source_fingerprint()
+                cache = root / "src/orchestrator/__pycache__"
+                cache.mkdir()
+                (cache / "module.pyc").write_bytes(b"generated")
+                self.assertEqual(launcher.bundle_source_fingerprint(), initial)
+                source.write_text("value = 2\n", encoding="utf-8")
+                changed = launcher.bundle_source_fingerprint()
+
+        self.assertRegex(initial, r"^sha256:[0-9a-f]{64}$")
+        self.assertNotEqual(changed, initial)
+
+    def test_runtime_identity_round_trip_is_version_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            launcher._write_runtime_identity(
+                runtime,
+                version="0.1.0",
+                source_fingerprint=TEST_FINGERPRINT,
+            )
+
+            self.assertEqual(
+                launcher.installed_runtime_fingerprint(
+                    runtime, version="0.1.0"
+                ),
+                TEST_FINGERPRINT,
+            )
+            self.assertIsNone(
+                launcher.installed_runtime_fingerprint(
+                    runtime, version="0.1.1"
+                )
+            )
+
+    def test_same_version_different_source_requires_runtime_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv"
+            (runtime / "bin").mkdir(parents=True)
+            orch = runtime / "bin/orch"
+            orch.touch()
+            candidate = root / "candidate-orch"
+            with (
+                patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(launcher, "bundle_version", return_value="0.1.0"),
+                patch.object(
+                    launcher,
+                    "bundle_source_fingerprint",
+                    return_value=TEST_FINGERPRINT,
+                ),
+                patch.object(
+                    launcher,
+                    "installed_runtime_version",
+                    return_value="0.1.0",
+                ),
+                patch.object(
+                    launcher,
+                    "installed_runtime_fingerprint",
+                    return_value="sha256:" + "b" * 64,
+                ),
+                patch.object(
+                    launcher,
+                    "daemon_snapshot",
+                    return_value=launcher.DaemonSnapshot("missing"),
+                ),
+                patch.object(
+                    launcher, "replace_runtime", return_value=candidate
+                ) as replace,
+            ):
+                actual, deferred, stopped = launcher.reconcile_runtime()
+
+        self.assertEqual(actual, candidate)
+        self.assertIsNone(deferred)
+        self.assertFalse(stopped)
+        replace.assert_called_once_with()
 
     def test_public_marketplace_uses_the_repository_plugin_source(self) -> None:
         marketplace = json.loads(
@@ -126,6 +208,7 @@ class BootstrapSmokeTests(unittest.TestCase):
             codex_path=codex_path,
             node_path=node_path,
             expected_version=__version__,
+            expected_source_fingerprint=launcher.bundle_source_fingerprint(),
             allow_loaded_replacement=False,
         )
         run_orch.assert_called_once_with(
@@ -140,7 +223,11 @@ class BootstrapSmokeTests(unittest.TestCase):
                 "--no-open",
             ],
         )
-        validate.assert_called_once_with(__version__, project_root=Path.cwd())
+        validate.assert_called_once_with(
+            __version__,
+            expected_source_fingerprint=launcher.bundle_source_fingerprint(),
+            project_root=Path.cwd(),
+        )
 
     def test_orch_setup_forwards_the_persistent_endpoint(self) -> None:
         output = io.StringIO()
@@ -276,6 +363,7 @@ class BootstrapSmokeTests(unittest.TestCase):
             wait_for_daemon.assert_called_once_with(
                 project_root=root / "project",
                 expected_version="0.1.0",
+                expected_source_fingerprint=None,
             )
 
     def test_wait_for_fixed_port_release_retries_after_owned_entry_teardown(self) -> None:
@@ -529,12 +617,23 @@ class BootstrapSmokeTests(unittest.TestCase):
             snapshot = launcher.DaemonSnapshot(
                 "idle",
                 version=__version__,
+                source_fingerprint=TEST_FINGERPRINT,
                 endpoint="http://127.0.0.1:61234",
                 project_root=str(Path.cwd().resolve()),
             )
             with (
                 patch.object(launcher, "app_data_root", return_value=root),
+                patch.object(
+                    launcher,
+                    "bundle_source_fingerprint",
+                    return_value=TEST_FINGERPRINT,
+                ),
                 patch.object(launcher, "installed_runtime_version", return_value=__version__),
+                patch.object(
+                    launcher,
+                    "installed_runtime_fingerprint",
+                    return_value=TEST_FINGERPRINT,
+                ),
                 patch.object(launcher, "daemon_snapshot", return_value=snapshot),
                 patch.object(launcher, "shutdown_idle_daemon") as shutdown,
             ):
@@ -593,10 +692,15 @@ class BootstrapSmokeTests(unittest.TestCase):
                 codex_path=None,
                 node_path=None,
                 expected_version="0.1.0",
+                expected_source_fingerprint=None,
                 allow_loaded_replacement=True,
             )
             run_orch.assert_called_once()
-            validate.assert_called_once_with("0.1.0", project_root=Path.cwd())
+            validate.assert_called_once_with(
+                "0.1.0",
+                expected_source_fingerprint=None,
+                project_root=Path.cwd(),
+            )
 
     def test_missing_runtime_install_failure_does_not_stop_an_idle_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -657,8 +761,13 @@ class BootstrapSmokeTests(unittest.TestCase):
             runtime.mkdir()
             (runtime / "old-runtime.txt").write_text("old", encoding="utf-8")
 
-            def install_candidate(candidate: Path, *, expected_version: str) -> Path:
-                del expected_version
+            def install_candidate(
+                candidate: Path,
+                *,
+                expected_version: str,
+                expected_source_fingerprint: str,
+            ) -> Path:
+                del expected_version, expected_source_fingerprint
                 orch = candidate / "bin" / "orch"
                 orch.parent.mkdir(parents=True)
                 orch.touch()
@@ -688,8 +797,17 @@ class BootstrapSmokeTests(unittest.TestCase):
             (previous / "old-runtime.txt").write_text("old", encoding="utf-8")
             events: list[str] = []
 
-            def validate(version: str, *, project_root: Path) -> None:
+            def validate(
+                version: str,
+                *,
+                expected_source_fingerprint: str,
+                project_root: Path,
+            ) -> None:
                 self.assertEqual(version, __version__)
+                self.assertEqual(
+                    expected_source_fingerprint,
+                    launcher.bundle_source_fingerprint(),
+                )
                 self.assertEqual(project_root, Path.cwd())
                 self.assertTrue(previous.exists())
                 events.append("validate")
@@ -845,6 +963,7 @@ class BootstrapSmokeTests(unittest.TestCase):
                 snapshot = launcher.DaemonSnapshot(
                     state,
                     version=__version__,
+                    source_fingerprint=TEST_FINGERPRINT,
                     endpoint="http://127.0.0.1:49178",
                     active_runs=("run-1",) if state == "active" else (),
                     persistent=True,
@@ -852,11 +971,19 @@ class BootstrapSmokeTests(unittest.TestCase):
                 )
                 with (
                     patch.object(launcher, "installed_runtime_version", return_value=__version__),
+                    patch.object(
+                        launcher,
+                        "installed_runtime_fingerprint",
+                        return_value=TEST_FINGERPRINT,
+                    ),
                     patch.object(launcher, "daemon_snapshot", return_value=snapshot),
                     patch.object(launcher, "shutdown_idle_daemon") as shutdown,
                 ):
                     deferred, stopped = launcher.restore_interrupted_runtime(
-                        root, project_root=Path.cwd(), expected_version=__version__
+                        root,
+                        project_root=Path.cwd(),
+                        expected_version=__version__,
+                        expected_source_fingerprint=TEST_FINGERPRINT,
                     )
                 self.assertTrue(orch.exists())
                 if state == "idle":

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
@@ -26,6 +27,15 @@ SOURCE_ROOT = Path(__file__).resolve().parents[1]
 PERSISTENT_CONTROL_PORT = 49178
 LAUNCH_AGENT_LABEL = "com.aiworker.relay"
 CAPABILITY_HEADER = "X-AIworker-Capability"
+RUNTIME_IDENTITY_FILE = ".aiworker-release.json"
+GENERATED_SOURCE_DIRECTORIES = {
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+}
 
 
 class RuntimeUpdateError(RuntimeError):
@@ -49,6 +59,7 @@ class DaemonSnapshot:
 
     state: str
     version: str | None = None
+    source_fingerprint: str | None = None
     pid: int | None = None
     endpoint: str | None = None
     active_runs: tuple[str, ...] = ()
@@ -117,6 +128,108 @@ def bundle_version() -> str:
     if not value:
         raise RuntimeUpdateError("Plugin version is empty")
     return value
+
+
+def bundle_source_fingerprint() -> str:
+    """Identify the exact installable Plugin bytes used by setup.
+
+    The digest covers every distributed regular file in the Plugin source,
+    including the manifest, Skill, launcher, runtime package, and static UI.
+    Build metadata and bytecode caches are excluded because setup can create
+    them after Codex has installed the bundle.
+    """
+
+    if SOURCE_ROOT.is_symlink() or not SOURCE_ROOT.is_dir():
+        raise RuntimeUpdateError("Plugin source root is not a normal directory")
+    digest = hashlib.sha256(b"AIworker Relay Plugin source v1\0")
+    files: list[Path] = []
+    for directory, dirnames, filenames in os.walk(SOURCE_ROOT, followlinks=False):
+        current = Path(directory)
+        retained_directories: list[str] = []
+        for name in sorted(dirnames):
+            path = current / name
+            if name in GENERATED_SOURCE_DIRECTORIES or name.endswith(".egg-info"):
+                continue
+            if path.is_symlink():
+                raise RuntimeUpdateError(
+                    f"Plugin source contains a symbolic-link directory: {path}"
+                )
+            retained_directories.append(name)
+        dirnames[:] = retained_directories
+        for name in sorted(filenames):
+            path = current / name
+            if path.suffix in {".pyc", ".pyo"} or name == ".DS_Store":
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeUpdateError(
+                    f"Plugin source contains a non-regular file: {path}"
+                )
+            files.append(path)
+    for path in sorted(
+        files, key=lambda value: value.relative_to(SOURCE_ROOT).as_posix()
+    ):
+        relative = path.relative_to(SOURCE_ROOT).as_posix()
+        stat = path.stat()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0x\0" if stat.st_mode & 0o111 else b"\0-\0")
+        digest.update(str(stat.st_size).encode("ascii"))
+        digest.update(b"\0")
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _valid_source_fingerprint(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef" for character in digest
+    )
+
+
+def installed_runtime_fingerprint(runtime: Path, *, version: str | None) -> str | None:
+    """Read the bundle identity accepted when this runtime was installed."""
+
+    if version is None:
+        return None
+    try:
+        value = json.loads(
+            (runtime / RUNTIME_IDENTITY_FILE).read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != 1
+        or value.get("version") != version
+        or not _valid_source_fingerprint(value.get("source_fingerprint"))
+    ):
+        return None
+    return str(value["source_fingerprint"])
+
+
+def _write_runtime_identity(
+    runtime: Path, *, version: str, source_fingerprint: str
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "version": version,
+        "source_fingerprint": source_fingerprint,
+    }
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=runtime,
+        prefix=f".{RUNTIME_IDENTITY_FILE}.",
+        delete=False,
+    ) as temporary:
+        json.dump(payload, temporary, ensure_ascii=False, sort_keys=True)
+        temporary.write("\n")
+        temporary_path = Path(temporary.name)
+    temporary_path.replace(runtime / RUNTIME_IDENTITY_FILE)
 
 
 def installed_runtime_version(orch: Path) -> str | None:
@@ -231,12 +344,17 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
     project_root = record.get("project_root")
     runtime_root = record.get("runtime_root")
     version = record.get("version")
+    source_fingerprint = record.get("source_fingerprint")
     persistent = record.get("persistent")
     if (
         not isinstance(project_root, str)
         or not project_root
         or not isinstance(runtime_root, str)
         or not isinstance(version, str)
+        or (
+            source_fingerprint is not None
+            and not _valid_source_fingerprint(source_fingerprint)
+        )
         or not isinstance(persistent, bool)
         or Path(runtime_root).resolve()
         != Path(project_root).resolve() / ".orch"
@@ -262,6 +380,7 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
         or health.get("project_root") != project_root
         or health.get("runtime_root") != runtime_root
         or health.get("version") != version
+        or health.get("source_fingerprint") != source_fingerprint
         or health.get("persistent") != persistent
     ):
         return DaemonSnapshot("unknown", pid=pid, endpoint=endpoint, reason="daemon health does not match its record")
@@ -287,6 +406,9 @@ def daemon_snapshot(root: Path) -> DaemonSnapshot:
     return DaemonSnapshot(
         "active" if active_runs else "idle",
         version=str(health["version"]),
+        source_fingerprint=(
+            str(source_fingerprint) if source_fingerprint is not None else None
+        ),
         pid=pid,
         endpoint=endpoint,
         active_runs=active_runs,
@@ -351,6 +473,7 @@ def _candidate_daemon_is_accepted(
     snapshot: DaemonSnapshot,
     *,
     expected_version: str,
+    expected_source_fingerprint: str | None,
     project_root: Path,
 ) -> bool:
     """Return whether the current runtime has passed the setup identity checks."""
@@ -358,6 +481,7 @@ def _candidate_daemon_is_accepted(
     return (
         snapshot.state in {"active", "idle"}
         and snapshot.version == expected_version
+        and snapshot.source_fingerprint == expected_source_fingerprint
         and snapshot.endpoint == f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
         and snapshot.persistent
         and snapshot.project_root is not None
@@ -374,6 +498,7 @@ def restore_interrupted_runtime(
     *,
     project_root: Path | None = None,
     expected_version: str | None = None,
+    expected_source_fingerprint: str | None = None,
 ) -> tuple[str | None, bool]:
     """Recover or defer the one transaction marked by ``venv.previous``.
 
@@ -407,11 +532,22 @@ def restore_interrupted_runtime(
         raise RuntimeUpdateError("runtime recovery is blocked: venv is invalid")
 
     expected = expected_version or bundle_version()
+    expected_fingerprint = (
+        expected_source_fingerprint or bundle_source_fingerprint()
+    )
     candidate_version = installed_runtime_version(venv_orch(runtime))
-    candidate_accepted = candidate_version == expected and _candidate_daemon_is_accepted(
-        snapshot,
-        expected_version=expected,
-        project_root=requested_project_root,
+    candidate_fingerprint = installed_runtime_fingerprint(
+        runtime, version=candidate_version
+    )
+    candidate_accepted = (
+        candidate_version == expected
+        and candidate_fingerprint == expected_fingerprint
+        and _candidate_daemon_is_accepted(
+            snapshot,
+            expected_version=expected,
+            expected_source_fingerprint=expected_fingerprint,
+            project_root=requested_project_root,
+        )
     )
     if candidate_accepted:
         if snapshot.state == "active":
@@ -442,7 +578,9 @@ def restore_interrupted_runtime(
     return None, stopped_verified_daemon
 
 
-def _install_runtime_at(runtime: Path, *, expected_version: str) -> Path:
+def _install_runtime_at(
+    runtime: Path, *, expected_version: str, expected_source_fingerprint: str
+) -> Path:
     runtime.parent.mkdir(parents=True, exist_ok=True)
     venv.EnvBuilder(with_pip=True).create(str(runtime))
     python = venv_python(runtime)
@@ -463,6 +601,11 @@ def _install_runtime_at(runtime: Path, *, expected_version: str) -> Path:
             "installed runtime version does not match this Plugin bundle "
             f"({actual_version or 'unavailable'} != {expected_version})"
         )
+    _write_runtime_identity(
+        runtime,
+        version=expected_version,
+        source_fingerprint=expected_source_fingerprint,
+    )
     return orch
 
 
@@ -472,11 +615,20 @@ def runtime_status() -> dict[str, object]:
     orch = venv_orch(runtime)
     ready = venv_python(runtime).is_file() and orch.is_file()
     expected_version = bundle_version()
+    expected_fingerprint = bundle_source_fingerprint()
     actual_version = installed_runtime_version(orch) if ready else None
+    actual_fingerprint = (
+        installed_runtime_fingerprint(runtime, version=actual_version)
+        if ready
+        else None
+    )
     daemon = daemon_snapshot(root)
     if not ready:
         update_status = "runtime_missing"
-    elif actual_version != expected_version:
+    elif (
+        actual_version != expected_version
+        or actual_fingerprint != expected_fingerprint
+    ):
         update_status = (
             "update_deferred_active_run"
             if daemon.state == "active"
@@ -486,6 +638,7 @@ def runtime_status() -> dict[str, object]:
         update_status = "update_blocked_unknown_daemon"
     elif daemon.state in {"active", "idle"} and (
         daemon.version != expected_version
+        or daemon.source_fingerprint != expected_fingerprint
         or daemon.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
         or not daemon.persistent
         or daemon.project_root is None
@@ -513,8 +666,11 @@ def runtime_status() -> dict[str, object]:
         "runtime_root": str(runtime),
         "runtime_ready": ready,
         "bundle_version": expected_version,
+        "bundle_source_fingerprint": expected_fingerprint,
         "runtime_version": actual_version,
+        "runtime_source_fingerprint": actual_fingerprint,
         "daemon_version": daemon.version,
+        "daemon_source_fingerprint": daemon.source_fingerprint,
         "daemon_state": daemon.state,
         "daemon_endpoint": daemon.endpoint,
         "daemon_persistent": daemon.persistent,
@@ -532,7 +688,11 @@ def install_runtime() -> Path:
     if runtime.exists():
         raise RuntimeUpdateError("runtime already exists; use the controlled replacement path")
     try:
-        return _install_runtime_at(runtime, expected_version=bundle_version())
+        return _install_runtime_at(
+            runtime,
+            expected_version=bundle_version(),
+            expected_source_fingerprint=bundle_source_fingerprint(),
+        )
     except Exception:
         _remove_runtime_tree(runtime)
         raise
@@ -552,7 +712,11 @@ def replace_runtime() -> Path:
         raise RuntimeUpdateError("runtime replacement is blocked: venv is invalid")
     runtime.replace(previous)
     try:
-        orch = _install_runtime_at(runtime, expected_version=bundle_version())
+        orch = _install_runtime_at(
+            runtime,
+            expected_version=bundle_version(),
+            expected_source_fingerprint=bundle_source_fingerprint(),
+        )
     except Exception as exc:
         _remove_runtime_tree(runtime)
         previous.replace(runtime)
@@ -572,13 +736,19 @@ def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
     """Prepare setup without updating during a live external run."""
 
     root = app_data_root()
-    recovery_deferred, recovery_stopped_verified_daemon = restore_interrupted_runtime(root)
+    expected_version = bundle_version()
+    expected_fingerprint = bundle_source_fingerprint()
+    recovery_deferred, recovery_stopped_verified_daemon = restore_interrupted_runtime(
+        root,
+        expected_version=expected_version,
+        expected_source_fingerprint=expected_fingerprint,
+    )
     if recovery_deferred:
         return None, recovery_deferred, False
     runtime = root / "venv"
     orch = venv_orch(runtime)
-    expected_version = bundle_version()
     actual_version = installed_runtime_version(orch)
+    actual_fingerprint = installed_runtime_fingerprint(runtime, version=actual_version)
     snapshot = daemon_snapshot(root)
     if snapshot.state in {"active", "idle"} and (
         snapshot.project_root is None
@@ -587,10 +757,14 @@ def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
         raise RuntimeUpdateError(
             "setup is blocked because the persistent control plane belongs to another project"
         )
-    runtime_needs_replace = actual_version != expected_version
+    runtime_needs_replace = (
+        actual_version != expected_version
+        or actual_fingerprint != expected_fingerprint
+    )
     daemon_needs_restart = snapshot.state in {"active", "idle"} and (
         runtime_needs_replace
         or snapshot.version != expected_version
+        or snapshot.source_fingerprint != expected_fingerprint
         or snapshot.endpoint != f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
         or not snapshot.persistent
     )
@@ -644,7 +818,10 @@ def reconcile_runtime() -> tuple[Path | None, str | None, bool]:
 
 
 def _validate_setup_result(
-    expected_version: str, *, project_root: Path | None = None
+    expected_version: str,
+    *,
+    expected_source_fingerprint: str | None = None,
+    project_root: Path | None = None,
 ) -> None:
     """Validate the daemon identity that authoritatively accepts a setup."""
 
@@ -652,6 +829,7 @@ def _validate_setup_result(
     if not _candidate_daemon_is_accepted(
         snapshot,
         expected_version=expected_version,
+        expected_source_fingerprint=expected_source_fingerprint,
         project_root=(project_root or Path.cwd()).resolve(),
     ):
         raise RuntimeUpdateError(
@@ -718,12 +896,14 @@ def rollback_runtime_update(
         old_version = installed_runtime_version(old_orch)
         if old_version is None:
             raise RuntimeUpdateError("restored runtime version is unavailable")
+        old_fingerprint = installed_runtime_fingerprint(runtime, version=old_version)
         ensure_macos_persistent_entry(
             runtime=runtime,
             project_root=project_root,
             codex_path=codex_path,
             node_path=node_path,
             expected_version=old_version,
+            expected_source_fingerprint=old_fingerprint,
             allow_loaded_replacement=stopped_verified_daemon,
         )
         exit_code = run_orch(
@@ -734,7 +914,11 @@ def rollback_runtime_update(
             raise RuntimeUpdateError(
                 f"restored control-plane setup failed with exit code {exit_code}"
             )
-        _validate_setup_result(old_version, project_root=project_root)
+        _validate_setup_result(
+            old_version,
+            expected_source_fingerprint=old_fingerprint,
+            project_root=project_root,
+        )
     except Exception as rollback_failure:
         raise RuntimeUpdateError(
             f"{failure}; runtime rollback failed: {rollback_failure}"
@@ -874,7 +1058,11 @@ def _wait_for_fixed_port_release(*, timeout: float = 5.0) -> None:
 
 
 def _wait_for_persistent_daemon(
-    *, project_root: Path, expected_version: str, timeout: float = 5.0
+    *,
+    project_root: Path,
+    expected_version: str,
+    expected_source_fingerprint: str | None,
+    timeout: float = 5.0,
 ) -> None:
     """Wait for the LaunchAgent to publish the expected loopback control plane."""
 
@@ -885,6 +1073,7 @@ def _wait_for_persistent_daemon(
         if (
             snapshot.state in {"active", "idle"}
             and snapshot.version == expected_version
+            and snapshot.source_fingerprint == expected_source_fingerprint
             and snapshot.endpoint == f"http://127.0.0.1:{PERSISTENT_CONTROL_PORT}"
             and snapshot.persistent
             and snapshot.project_root is not None
@@ -904,6 +1093,7 @@ def ensure_macos_persistent_entry(
     codex_path: Path | None,
     node_path: Path | None,
     expected_version: str,
+    expected_source_fingerprint: str | None = None,
     allow_loaded_replacement: bool = False,
 ) -> None:
     """Install and start the macOS user entry without changing a live run."""
@@ -981,6 +1171,7 @@ def ensure_macos_persistent_entry(
         _wait_for_persistent_daemon(
             project_root=project_root,
             expected_version=expected_version,
+            expected_source_fingerprint=expected_source_fingerprint,
         )
     except RuntimeUpdateError as exc:
         raise PersistentEntryChangedError(str(exc)) from exc
@@ -1036,6 +1227,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             node_path = current_node_cli()
             project_root = Path.cwd()
             expected_version = bundle_version()
+            expected_fingerprint = bundle_source_fingerprint()
             try:
                 ensure_macos_persistent_entry(
                     runtime=orch.parent.parent,
@@ -1043,6 +1235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     codex_path=codex_path,
                     node_path=node_path,
                     expected_version=expected_version,
+                    expected_source_fingerprint=expected_fingerprint,
                     allow_loaded_replacement=stopped_verified_daemon,
                 )
                 exit_code = run_orch(
@@ -1056,7 +1249,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise RuntimeUpdateError(
                         f"persistent control-plane setup failed with exit code {exit_code}"
                     )
-                _validate_setup_result(expected_version, project_root=project_root)
+                _validate_setup_result(
+                    expected_version,
+                    expected_source_fingerprint=expected_fingerprint,
+                    project_root=project_root,
+                )
             except Exception as failure:
                 if candidate_transaction or stopped_verified_daemon:
                     entry_was_changed = isinstance(
