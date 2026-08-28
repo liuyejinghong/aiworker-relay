@@ -21,6 +21,36 @@ class ProcessControlError(RuntimeError):
     """A process lifecycle operation is invalid or could not be observed."""
 
 
+def _tool_read_candidates(entry: Path) -> tuple[Path, ...]:
+    """Return the narrow package roots needed by one PATH directory."""
+
+    for prefix in (Path("/opt/homebrew"), Path("/usr/local")):
+        if entry == prefix or prefix in entry.parents:
+            return (
+                entry,
+                prefix / "Cellar",
+                prefix / "lib" / "node_modules",
+                prefix / "opt",
+            )
+
+    frameworks = Path("/Library/Frameworks")
+    try:
+        relative = entry.relative_to(frameworks)
+    except ValueError:
+        relative = None
+    if relative and relative.parts[0].endswith(".framework"):
+        return (frameworks / relative.parts[0],)
+
+    for root in (
+        Path("/Library/Developer/CommandLineTools"),
+        Path("/Applications/Xcode.app"),
+    ):
+        if entry == root or root in entry.parents:
+            return (root,)
+
+    return (entry,)
+
+
 def _tool_path_and_read_roots(
     project_root: Path, worktree: Path
 ) -> tuple[str, tuple[Path, ...]]:
@@ -47,26 +77,11 @@ def _tool_path_and_read_roots(
         if candidate.is_dir() and candidate not in path_entries:
             path_entries.append(candidate)
 
-    package_roots = tuple(
-        path
-        for path in (
-            Path("/opt/homebrew"),
-            Path("/usr/local"),
-            Path("/Library/Frameworks"),
-            Path("/Library/Developer/CommandLineTools"),
-            Path("/Applications/Xcode.app"),
-        )
-        if path.exists()
-    )
     read_roots: list[Path] = []
     for entry in path_entries:
-        root = entry
-        for package_root in package_roots:
-            if entry == package_root or package_root in entry.parents:
-                root = package_root
-                break
-        if root not in read_roots:
-            read_roots.append(root)
+        for root in _tool_read_candidates(entry):
+            if (root == entry or root.is_dir()) and root not in read_roots:
+                read_roots.append(root)
 
     return os.pathsep.join(str(path) for path in path_entries), tuple(read_roots)
 

@@ -12,11 +12,22 @@ from unittest.mock import AsyncMock, patch
 
 from orchestrator.runner import (
     _tool_path_and_read_roots,
+    _tool_read_candidates,
     start_codex_run,
 )
 
 
 class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    def test_homebrew_path_does_not_grant_config_or_runtime_data(self) -> None:
+        roots = _tool_read_candidates(Path("/opt/homebrew/bin"))
+
+        self.assertIn(Path("/opt/homebrew/bin"), roots)
+        self.assertIn(Path("/opt/homebrew/Cellar"), roots)
+        self.assertIn(Path("/opt/homebrew/lib/node_modules"), roots)
+        self.assertNotIn(Path("/opt/homebrew"), roots)
+        self.assertNotIn(Path("/opt/homebrew/etc"), roots)
+        self.assertNotIn(Path("/opt/homebrew/var"), roots)
+
     def test_tool_path_rewrites_source_entries_to_the_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
