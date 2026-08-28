@@ -83,6 +83,20 @@
 
 因此，v0.1.16 已修复并验证 LaunchAgent 对 Node 包装的 Codex CLI 的本机启动前提；NVIDIA 的最小真实 external write、隔离、证据回读和 TERM 停止联动均已通过。Profile 仍显示 `unverified`，不是本次验收失败，而是当前产品尚未接受“哪些能力足以晋级”及对应写入操作；不能在没有该规则时静默改变用户的长期 Profile 状态。
 
+## 2026-08-27 runner permission profile 修正
+
+本次源码修正针对独立审查确认的两条安全边界：普通 shell 显式读取真实 HOME 可恢复 Secret，以及项目 `.codex/config.toml` 可覆盖较低优先级的 shell policy / reasoning。它没有切换模型、Profile 或 Provider，也没有发布或部署。
+
+| 验证点 | 结果 | 证据与边界 |
+| --- | --- | --- |
+| 完整 Python 回归 | 通过 | 2026-08-28 在最新 `main` 重建候选后，应用级 venv 执行 `unittest discover -s tests -v`，123 项通过；首次受当前父沙箱限制的 loopback bind 失败，授权本机 loopback 后同一套测试通过。 |
+| permission profile 真实哨兵 | 通过 | macOS Codex 0.149 的 `codex sandbox -P aiworker` 可运行直接 Command Line Tools Git、Homebrew `rg` / `node` 与 Python，可写 detached worktree 和 run-scoped HOME，并通过 `git status` / `git rev-parse --git-common-dir`。显式读取真实 `.zshrc`、主 checkout 与 source index 均被拒绝，假 OpenRouter Key 未进入工具环境；向主 checkout `.orch/outside-worktree-sentinel` 的固定越界写被 OS sandbox 拒绝，命令网络为 disabled。 |
+| Homebrew 读取边界 | 通过 | 2026-08-28 收窄后只放行实际 PATH 目录、Homebrew `Cellar` / `opt` / 全局 CLI package 树，不再放行整个 `/opt/homebrew` 或 `/usr/local`。Codex 0.149 真实 sandbox 中 Node、`rg`、Python 与 Command Line Tools Git 均可运行；`/opt/homebrew/var/mysql/server-key.pem` 的固定读取被拒绝，未打印其内容。 |
+| project-config precedence | 通过 | worktree 临时加入尝试开启 danger-full-access、login shell、full env inheritance、Key include 和低 reasoning 的 `.codex/config.toml`；`codex debug prompt-input` 回读仍为 deny-by-default `aiworker` profile 与固定 writable roots，未出现 danger-full-access，且 `AGENTS.md` 继续加载。临时恶意配置未进入提交。 |
+| Provider 父进程环境可见性 | 通过 | 2026-08-28 分别在 Codex 0.149 与临时 0.151.0-alpha.7 的真实 macOS sandbox 中注入固定假 ambient token；worker shell 用 `ps eww` 检查父进程时均未发现该 token，且未打印任何进程环境内容。该结论只适用于当前 macOS 预发布范围，不扩展为 Linux `/proc` 声明。 |
+| host temp 隔离 | 未通过，保留为发布边界 | 2026-08-28 以临时安装且不替换全局 CLI 的 Codex `0.151.0-alpha.7` 复跑固定假 sentinel：detached worktree 与 run HOME 可写，source checkout 读写、普通真实 HOME 读取和工具网络被拒绝，但 `/private/tmp` 的既有假 sentinel 仍可读，固定 host-temp 路径仍可写。去掉 `:minimal` 会使 sandbox 进程退出，增加 canonical temp deny 也不改变结果；不再重复堆叠 deny 规则。 |
+| Provider runtime 回读 | 待执行 | 当前只验证假 Key 与无 Provider 的真实 Codex sandbox/effective-context；必须在新源码进入安装 runtime 后，用用户现有明确选择的 Profile 完成一次真实认证与最小 write，才能声称 provider 进程仍可认证且新 runner 已端到端生效。 |
+
 ## 已验证结论
 
 1. 使用独立 `CODEX_HOME` 的 Codex CLI 可以真实地走 OpenRouter 调用 Ox Alpha，不需要自己实现模型 SDK 或 agent loop。

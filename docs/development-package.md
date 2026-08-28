@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 开发分发 | 使用 Codex local marketplace 安装 Plugin；仓库 `.agents/plugins/marketplace.json` 指向 `plugins/aiworker-relay/`，该唯一 Plugin source 同时包含 `aiworker-relay` Skill 与启动本地运行时所需资源。公开目录发布不是本切片工作。 | 不安装 MCP server，不改写 Codex 的默认模型、provider 或原生 worker 配置。 |
 | 运行时 bootstrap | 明确的 `$aiworker-relay setup` 通过 Plugin 随包 launcher 检查 Python 3.12+，在用户应用数据目录创建并复用专用 `venv`，再从该环境调用 `orch setup` 启动 `external-workersd`。缺失依赖时，这一次明确 setup 直接授权安装，不再追加对话确认。 | 不依赖或改写用户全局 Python site-packages。首次应用级安装已完成一次真实 marketplace 验收；改版 bootstrap 待重新安装复核。 |
-| 首发 harness | 只使用 `codex exec`，以 `--json`、`--ephemeral`、`--approve-for-me` 和 `--output-last-message` 运行。每个 run 使用独立 `CODEX_HOME` 与独立 provider 配置，自动审批仍是 Codex 的 workspace-write 模式。 | 不引入第二条 CLI、SDK、自研 agent loop 或危险的全局 sandbox bypass。 |
+| 首发 harness | 只使用 `codex exec`，以 `--json`、`--ephemeral`、`--strict-config`、`--approve-for-me` 和 `--output-last-message` 运行。每个 run 使用独立 `CODEX_HOME`、隔离 HOME 与 run-scoped permission profile；安全配置和用户已选 reasoning 由 CLI 固定。 | 不同时传旧 `--sandbox`，不引入第二条 CLI、SDK、自研 agent loop 或危险的全局 sandbox bypass。 |
 | 上下文 | Task Packet 提供目标、范围、禁止修改项、已知事实、验收与验证。外部 run 不继承主 Codex 对话、主 `CODEX_HOME` 或 hooks；工作区内的项目规则仍是该项目的事实。 | 不复制主 Codex 的完整上下文。 |
 | 写入隔离 | 写入任务只在从当前 `HEAD` 创建的 Git worktree 中执行，worktree 位于 `.orch/worktrees/<run-id>`。主工作区保持不变，run 不创建 commit，也不自动 merge。 | 不直接让外部 worker 写主工作区，不复制未提交改动。 |
 | dirty 工作区 | 若主工作区有未提交改动，run 仍以 `HEAD` 为源；看板和 Task Packet 必须明确标记“未提交改动未包含”。用户可先整理版本库或改用原生 worker。 | 不在首版实现 patch 复制、stash 恢复或自动冲突处理。 |
@@ -40,13 +40,14 @@
 
 ```text
 codex exec --json --ephemeral \
+  --strict-config \
   --approve-for-me \
   --output-last-message <run>/last-message.md \
   --cd <worktree> \
   <task-packet-prompt>
 ```
 
-隔离 `CODEX_HOME` 只包含此次 OpenRouter provider 的配置。控制面从系统密钥服务短暂读取 key，并仅向该子进程提供所需认证环境；主 Codex 的配置、会话和 hooks 不被复制进去。
+隔离 `CODEX_HOME` 只包含此次 OpenRouter provider 与 `aiworker` permission profile 的配置。该 profile 不继承 `:workspace`，而是从默认拒绝开始，只读放行 Codex 最小平台运行时、当前 PATH 所需工具链和 linked-worktree Git metadata，并放行 detached worktree 与 run-scoped 隔离 HOME 写入。控制面从系统密钥服务短暂读取 key；该 Key 只注入受信任的本机 provider 子进程。provider 子进程仍继承 daemon 的其他本机环境，而 worker 工具使用 `inherit=none` 的隔离 HOME / TMP / XDG，无法直接继承 Key 或其他 ambient 变量；当前 macOS 预发布链路的固定假 token 父进程可见性探针也未发现该变量。项目 `.codex/config.toml` 按 untrusted 跳过，但 worktree 中的 `AGENTS.md` 仍作为项目事实加载。当前 macOS Codex 普通 shell 仍可读写 host `/tmp` 与 `/var/tmp`；这条已知边界不被文档包装成完整 host isolation。
 
 ## Task Packet 与 Run Evidence
 

@@ -9,6 +9,7 @@ import math
 import os
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -18,6 +19,82 @@ import psutil
 
 class ProcessControlError(RuntimeError):
     """A process lifecycle operation is invalid or could not be observed."""
+
+
+def _tool_read_candidates(entry: Path) -> tuple[Path, ...]:
+    """Return the narrow package roots needed by one PATH directory."""
+
+    for prefix in (Path("/opt/homebrew"), Path("/usr/local")):
+        if entry == prefix or prefix in entry.parents:
+            return (
+                entry,
+                prefix / "Cellar",
+                prefix / "lib" / "node_modules",
+                prefix / "opt",
+            )
+
+    frameworks = Path("/Library/Frameworks")
+    try:
+        relative = entry.relative_to(frameworks)
+    except ValueError:
+        relative = None
+    if relative and relative.parts[0].endswith(".framework"):
+        return (frameworks / relative.parts[0],)
+
+    for root in (
+        Path("/Library/Developer/CommandLineTools"),
+        Path("/Applications/Xcode.app"),
+    ):
+        if entry == root or root in entry.parents:
+            return (root,)
+
+    return (entry,)
+
+
+def _tool_path_and_read_roots(
+    project_root: Path, worktree: Path
+) -> tuple[str, tuple[Path, ...]]:
+    """Keep installed tools reachable and list the roots they need to read."""
+
+    candidates = os.environ.get("PATH", os.defpath).split(os.pathsep)
+    if sys.platform == "darwin":
+        candidates = [
+            "/Library/Developer/CommandLineTools/usr/bin",
+            "/Applications/Xcode.app/Contents/Developer/usr/bin",
+            *candidates,
+        ]
+
+    path_entries: list[Path] = []
+    for value in candidates:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            continue
+        candidate = candidate.resolve()
+        try:
+            candidate = worktree / candidate.relative_to(project_root)
+        except ValueError:
+            pass
+        if candidate.is_dir() and candidate not in path_entries:
+            path_entries.append(candidate)
+
+    read_roots: list[Path] = []
+    for entry in path_entries:
+        for root in _tool_read_candidates(entry):
+            if (root == entry or root.is_dir()) and root not in read_roots:
+                read_roots.append(root)
+
+    return os.pathsep.join(str(path) for path in path_entries), tuple(read_roots)
+
+
+def _validate_run_roots(worktree: Path, git_common_dir: Path) -> None:
+    if not worktree.is_dir():
+        raise ProcessControlError(
+            f"external run worktree is unavailable: {worktree}"
+        )
+    if not git_common_dir.is_dir():
+        raise ProcessControlError(
+            f"external run Git metadata is unavailable: {git_common_dir}"
+        )
 
 
 def _error_message(value: object) -> str | None:
@@ -484,7 +561,10 @@ async def start_process(
 
 async def start_codex_run(
     *,
+    project_root: Path,
     worktree: Path,
+    git_common_dir: Path,
+    source_checkout_index: Path,
     run_dir: Path,
     prompt: str,
     model: str,
@@ -496,11 +576,41 @@ async def start_codex_run(
 ) -> ManagedProcess:
     """Start the only accepted v0.1 harness: isolated ``codex exec``."""
 
+    project_root = project_root.resolve()
+    worktree = worktree.resolve()
+    git_common_dir = git_common_dir.resolve()
+    source_checkout_index = source_checkout_index.resolve()
+    run_dir = run_dir.resolve()
+    code_home = code_home.resolve()
+    isolated_home = run_dir / "HOME"
+    isolated_tmp = isolated_home / "tmp"
     code_home.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
+    isolated_tmp.mkdir(parents=True, exist_ok=True)
+    _validate_run_roots(worktree, git_common_dir)
+
+    # The provider process still needs the host PATH and its OpenRouter Key,
+    # but every tool process receives only this run-scoped environment.
+    tool_path, tool_read_roots = _tool_path_and_read_roots(project_root, worktree)
+    filesystem_read_roots = tuple(dict.fromkeys((*tool_read_roots, git_common_dir)))
+    tool_environment = {
+        "PATH": tool_path,
+        "HOME": str(isolated_home),
+        "USERPROFILE": str(isolated_home),
+        "TMPDIR": str(isolated_tmp),
+        "TMP": str(isolated_tmp),
+        "TEMP": str(isolated_tmp),
+        "XDG_CONFIG_HOME": str(isolated_home / ".config"),
+        "XDG_CACHE_HOME": str(isolated_home / ".cache"),
+        "XDG_DATA_HOME": str(isolated_home / ".local" / "share"),
+        "APPDATA": str(isolated_home / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(isolated_home / "AppData" / "Local"),
+    }
     # Keep provider and model selection inside this run's CODEX_HOME.  The
     # parent Codex config and its hooks are never copied into this directory.
     config_lines = [
+        "allow_login_shell = false",
+        'default_permissions = "aiworker"',
         'model_provider = "openrouter"',
         f"model = {json.dumps(model)}",
     ]
@@ -508,6 +618,45 @@ async def start_codex_run(
         config_lines.append(f"model_reasoning_effort = {json.dumps(reasoning_effort)}")
     config_lines.extend(
         [
+            "",
+            "[permissions.aiworker]",
+            'description = "AIworker isolated write run"',
+            "",
+            "[permissions.aiworker.workspace_roots]",
+            f"{json.dumps(str(isolated_home))} = true",
+            "",
+            "[permissions.aiworker.filesystem]",
+            '":root" = "deny"',
+            '":minimal" = "read"',
+            '":tmpdir" = "deny"',
+            '":slash_tmp" = "deny"',
+            *(
+                f'{json.dumps(str(path))} = "read"'
+                for path in filesystem_read_roots
+            ),
+            f'{json.dumps(str(source_checkout_index))} = "deny"',
+            "",
+            '[permissions.aiworker.filesystem.":workspace_roots"]',
+            '"." = "write"',
+            '".codex" = "read"',
+            '".env*" = "deny"',
+            "",
+            "[permissions.aiworker.network]",
+            "enabled = false",
+            "",
+            "[shell_environment_policy]",
+            'inherit = "none"',
+            "ignore_default_excludes = false",
+            "experimental_use_profile = false",
+            "",
+            "[shell_environment_policy.set]",
+            *(
+                f"{key} = {json.dumps(value)}"
+                for key, value in tool_environment.items()
+            ),
+            "",
+            "[shell_environment_policy.filters]",
+            '"OPENROUTER_API_KEY" = "exclude"',
             "",
             "[model_providers.openrouter]",
             'name = "OpenRouter"',
@@ -519,25 +668,48 @@ async def start_codex_run(
     )
     (code_home / "config.toml").write_text("\n".join(config_lines), encoding="utf-8")
     output_path = run_dir / "last-message.md"
-    command = [
-        executable,
-        "exec",
-        "--json",
-        "--ephemeral",
-        # External runs cannot answer a terminal approval prompt. Keep their
-        # automatic approval within Codex's supported workspace-write mode.
-        "--approve-for-me",
-        "--model",
-        model,
-        "--output-last-message",
-        str(output_path),
-        "--cd",
-        str(worktree),
-        prompt,
+    overrides = [
+        "allow_login_shell=false",
+        'default_permissions="aiworker"',
+        f"projects.{json.dumps(str(worktree))}.trust_level=\"untrusted\"",
+        'shell_environment_policy.inherit="none"',
+        "shell_environment_policy.ignore_default_excludes=false",
+        "shell_environment_policy.experimental_use_profile=false",
+        'shell_environment_policy.filters.OPENROUTER_API_KEY="exclude"',
     ]
+    if reasoning_effort and reasoning_effort != "auto":
+        overrides.append(
+            f"model_reasoning_effort={json.dumps(reasoning_effort)}"
+        )
+    overrides.extend(
+        f"shell_environment_policy.set.{key}={json.dumps(value)}"
+        for key, value in tool_environment.items()
+    )
+
+    command = [executable, "exec", "--json", "--ephemeral", "--strict-config"]
+    for override in overrides:
+        command.extend(["-c", override])
+    command.extend(
+        [
+            # External runs cannot answer a terminal approval prompt. Keep
+            # automatic approval inside the selected least-privilege profile.
+            "--approve-for-me",
+            "--model",
+            model,
+            "--output-last-message",
+            str(output_path),
+            "--cd",
+            str(worktree),
+            prompt,
+        ]
+    )
     environment = os.environ.copy()
     environment["CODEX_HOME"] = str(code_home)
-    # The key is only in the child environment; it is never part of a record.
+    environment.update(tool_environment)
+    environment.pop("HOMEDRIVE", None)
+    environment.pop("HOMEPATH", None)
+    # The provider process needs the Key, while shell_environment_policy keeps
+    # it and other ambient secrets out of commands spawned by the worker.
     environment["OPENROUTER_API_KEY"] = api_key
     return await start_process(
         command,
