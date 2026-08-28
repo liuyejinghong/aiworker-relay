@@ -26,4 +26,4 @@ jobs:
       - name: Verify locked fresh install
         run: python tests/locked_install_smoke.py "$RUNNER_TEMP/aiworker-runtime"
       - name: Run tests
-        run: "$RUNNER_TEMP/aiworker-runtime/bin/python" -m unittest discover -s tests
+        run: '"$RUNNER_TEMP/aiworker-runtime/bin/python" -m unittest discover -s tests'
