@@ -40,7 +40,7 @@
 
 ## 已接受的本机技术选型
 
-首版支持 macOS、Windows 和具备系统密钥服务的桌面 Linux。性能目标不是处理海量并发请求，而是让闲置机器没有无意义轮询，让活跃 run 的观测、停止和页面更新保持事件驱动。
+v0.1.x 公开预览只支持 macOS，并保持一个持久 daemon 绑定一个项目根目录；Windows、Linux 和多项目控制面没有发布承诺。性能目标不是处理海量并发请求，而是让闲置机器没有无意义轮询，让活跃 run 的观测、停止和页面更新保持事件驱动。
 
 | 关注点 | 选择 | 边界与原因 |
 | --- | --- | --- |
@@ -49,11 +49,11 @@
 | 本机网络边界 | loopback `127.0.0.1` | Web、SSE 和控制 API 仅服务本机；launcher 通过原子 `daemon.json` 检查、复用或清理失效 daemon 记录。记录绑定一个项目根目录，不同项目会拒绝复用，避免误派 worktree。 |
 | 后端 | Python 3.12+、`asyncio`、`aiohttp` | `asyncio` 负责外部 CLI 的异步生命周期；`aiohttp` 只负责本机 HTTP、静态资源和 SSE，避免手写 HTTP 协议或引入 FastAPI/Uvicorn 组合。 |
 | 页面 | 静态 HTML、CSS、原生 JavaScript | 不引入 React、构建链、Node 常驻进程或桌面壳。现有原型可直接演进为页面资源。 |
-| 实时更新 | SSE 推送状态，HTTP `POST` 执行操作 | 看板主要接收状态；用户只是偶尔保存设置、冻结 profile 或停止 run，因此不需要 WebSocket 或短周期全量轮询。 |
-| 进程观测与停止 | `asyncio` + `psutil` | 只对外部 run 读取 `rss`，默认每 2 秒一次；只在停止时枚举进程树。POSIX 使用独立进程组，Windows 使用新进程组与递归进程树终止。 |
+| 实时更新 | SSE 推送状态，HTTP 写请求执行操作 | 看板主要接收状态；用户只是偶尔保存设置、冻结 profile、停止 run 或删除 terminal data，因此不需要 WebSocket 或短周期全量轮询。 |
+| 进程观测与停止 | `asyncio` + `psutil` | 只对外部 run 读取 `rss`，默认每 2 秒一次；SSE 实时推送，但记录只保留最近 120 个样本及全程 count / last / peak，不为每个样本执行磁盘持久化。只在停止时枚举进程树。 |
 | 密钥 | `keyring` | 写入系统 Keychain、Windows Credential Locker 或 Linux Secret Service；密钥服务不可用时设置失败并说明原因，不回退到明文文件。 |
 | Provider HTTPS | `truststore` | 对 OpenRouter 请求使用操作系统证书库，不关闭 TLS 校验，也不假设 Python 自带 CA bundle 已正确安装。 |
-| 本地数据 | 原子 JSON + JSONL | 用户级 Profile 放在应用数据目录；项目级 run 证据放在 `.orch/runs/`。实际费用汇总在可靠归因前不生成。 |
+| 本地数据 | 原子 JSON + JSONL | 用户级 Profile 放在应用数据目录；项目级 run 证据与 worktree 放在 `.orch/`，默认保留到用户显式删除，Plugin 卸载不删除它们。实际费用汇总在可靠归因前不生成。 |
 
 运行时依赖只有 `aiohttp`、`psutil`、`keyring` 和 `truststore`。不引入数据库、Redis、消息队列、WebSocket 框架、前端框架或额外的进程管理器。
 
@@ -188,6 +188,8 @@ stateDiagram-v2
 - 运行时为外部 run 生成隔离的 Codex 配置；不得复用主 Codex 的完整运行目录。
 - API key 由 `keyring` 写入系统密钥服务，不进仓库、不进 task packet、不在页面回显；没有可用密钥服务时不允许明文降级。
 - `.orch/` 保存项目级 run 元数据、证据与 detached worktree，并被 Git 忽略。
+- `task-packet.md`、`last-message.md`、`diff.patch` 与 JSONL 文本只替换当前配置的精确 OpenRouter Key；这不是通用秘密扫描。raw worktree 和隔离 `CODEX_HOME` 不声称已脱敏。
+- terminal run 的本地数据默认保留到用户在看板中显式删除；删除拒绝 active run，并通过 Git worktree 操作移除对应 detached worktree。Plugin 卸载和 runtime 更新都保留项目 `.orch/`。
 - `.env` 只作为本次受控验证的本机输入，已被 Git 忽略。
 
 ## 费用与数据来源
@@ -206,4 +208,4 @@ OpenRouter 的原始 API 响应可以给出 token 与实际 `cost`。当前验�
 
 没有 provider adapter 层、数据库、Redis、队列、通用 worktree manager、通用 workflow engine、自动 fallback 链、自动 benchmark 或 LLM judge。首发只实现一条固定的 Git worktree 路径。
 
-这些不属于 v0.1 成立所需的能力。实际费用归因在控制路径可用后单独推进；多项目并发控制面也需要新的产品决定，不能从当前单项目绑定中隐式扩展。
+这些不属于 v0.1 成立所需的能力。实际费用归因在控制路径可用后单独推进；v0.1.x 保持单项目绑定，未来若扩展多项目控制面必须重新决策，不能从当前拒绝语义中隐式长出来。

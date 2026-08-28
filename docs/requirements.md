@@ -27,7 +27,7 @@
 - 停止外部 run 的顺序是温和停止、确认仍存活后再强制终止，并报告实际结果。
 - run 进程退出后先把退出码、停止结果和不可用费用写入 `incomplete` 检查点，再收集证据；只有 `diff.patch`、`files.json`，以及自然成功所需的 `last-message.md` 都可读并持久化时，才显示 `succeeded`。append-only 的 `run.finished` 先记录仍为 `incomplete` 的检查点及候选结果，最终状态只由随后一次 `run.json` 原子写入提交，避免事件先于记录宣称成功。证据、持久化或终端事件失败必须保持 `incomplete`；终端 SSE 广播只是实时提示，失败不得降级已经持久化的最终结果，也不得留下活跃状态或伪造成功；若进程在清理后仍存活，必须保留进程句柄作为阻塞事实。
 - daemon 重启不重新接管旧进程。对磁盘中的 `starting` / `running` / `stopping` 记录，只有正整数 PID、`psutil` 创建时间和 POSIX 进程组（Windows 进程树）完全匹配时才发送 TERM，超时再发送 KILL；身份缺失、PID 复用、进程不存在或 KILL 后仍存活均记录为用户可见的 `incomplete`，不得向不确定进程发信号。
-- 外部 worker 需要单 run、日、月的 usage / cost 视图和预算告警。
+- v0.1.x 不承诺单 run、日、月的实际费用、预算控制或 independently verifiable test evidence；归因不可得时保持 `pending` / `unavailable`，worker 报告的测试仍由 Codex 判断是否需要独立重跑。
 - OpenRouter 账户余额与当前 API Key 的限额是独立的 provider 事实：只在用户从 Web 主动刷新时读取，明确区分管理 Key 可读的账户总额、普通 Key 可读的自身限额，以及尚未建立的 per-run 实际费用归因。
 - provider privacy / data-retention 差异需要作为 profile 可见信息，而非隐藏配置。
 - 每个外部 worker 需要独立详情卡：模型参数、上下文窗口、当前价格、数据保留提示、公共 benchmark 参考与本机兼容性验证。公共跑分必须带来源和更新时间；未收录时明确显示无数据，不得虚构分数。
@@ -37,16 +37,20 @@
 - 模型目录收录只证明模型当前可发现，不等于外部 harness 已兼容。新 profile 必须把“已识别”与“本机尚未验证”分开；添加时不自动发起会消耗额度的任务。
 - 每个外部 worker profile 有用户确认的默认推理策略，只能从该模型实际支持的档位中选择。v0.1 的 CLI/UI 不提供 per-run reasoning 选择；run payload 若包含 `reasoning_effort` key（包括 `null` 或空字符串）必须稳定返回 `reasoning_override_not_supported`，并只使用 Profile 默认值。Profile 值为 `auto` 时记录为 `profile_auto`，固定值记录为 `profile_default`。
 - 产品保持本地、轻量、CLI first；Web 看板是运行控制面，不是远程 SaaS。
-- 首版跨平台目标是 macOS、Windows 和具备系统密钥服务的桌面 Linux。
+- v0.1.x 公开预览只支持 macOS。Windows、Linux 的代码路径不构成发布支持声明，必须在各自安装、Keyring、sandbox 与停止证据完成后另行决定。
 - 本地控制面是单个持久 `external-workersd`：Python 3.12+、`asyncio` 与 `aiohttp`；同一进程服务本机 Web、SSE、状态 API 与外部 run 监管。它固定绑定 loopback `127.0.0.1:49178`；macOS 的 setup 将该同一进程注册为用户级 LaunchAgent。一个活跃 daemon 绑定一个项目根目录；第二个项目不得静默复用它。
 - 每次 `external-workersd` 启动生成一个随机 capability，写入用户专属且 owner-only 的 `daemon.json`；health/overview、错误、日志、URL 与静态 JavaScript 不返回该值。浏览器只使用 host-only、HttpOnly、SameSite=Strict cookie；CLI/launcher 只使用 `X-AIworker-Capability`，两种模式不混用。CLI/launcher 必须用 capability 和 health 的 PID、端口、项目根、runtime 根、版本及 persistent 状态确认 daemon 身份；旧记录没有 capability 且 PID 仍存活时视为 unknown，不复用、停止、杀进程或覆盖。
 - v0.1 信任能够发起任意原始 loopback HTTP 的本地进程。浏览器 cookie 不按端口隔离，因此它只作为 hostile browser origin / CSRF 防护，不声称隔离可读取其他 `127.0.0.1` 端口 cookie 的本地进程；若未来要防该主体，必须另行接受不同的 browser bootstrap 或 IPC 边界。携带 capability 的 CLI/launcher HTTP 请求不得跟随重定向。
 - loopback API 严格接受 `127.0.0.1:<实际端口>` Host；浏览器 API/SSE 只接受同源 Origin、Fetch Metadata 的 same-origin/none、非 no-cors 且非 subresource 请求。静态首个顶层文档导航可以领取 cookie，同源静态资源可以加载；API JSON 写入必须声明 `application/json`（可带 charset），shutdown 同样解析 JSON 对象。
-- 页面使用静态 HTML、CSS 和原生 JavaScript；状态使用 SSE 推送，用户操作使用 HTTP `POST`，不使用 React、WebSocket、Node 常驻进程或桌面壳。
+- 页面使用静态 HTML、CSS 和原生 JavaScript；状态使用 SSE 推送，用户操作使用受保护的 HTTP 写请求，不使用 React、WebSocket、Node 常驻进程或桌面壳。
 - 外部 run 用 `asyncio` 管理生命周期，`psutil` 读取 RSS 与在停止时枚举进程树。只有活跃外部 run 每 2 秒采样一次；原生 worker 不采样。
+- RSS 通过 SSE 实时推送；run 状态只保留最近 120 个样本以及全程 sample count、last、peak。每个 RSS 样本不写 `run.json` 或 `events.jsonl`，生命周期检查点负责持久化当前有界摘要。
 - API Key 使用 `keyring` 写入操作系统密钥服务；密钥服务不可用时拒绝保存，不回退到明文文件。Provider HTTPS 使用操作系统证书库，不关闭 TLS 验证。
 - 用户级 Profile 使用原子 JSON；项目级 run 证据使用 `.orch/runs/` 下的 JSONL。真实费用日/月汇总在可靠归因前不生成，不引入数据库。
+- 项目 `.orch/` 中的 Task Packet、结果、diff、事件、run metadata、隔离 `CODEX_HOME` 与 detached worktree 默认保留到用户显式删除。看板必须披露位置与保留规则，拒绝删除 active run，并支持删除一条或全部 eligible terminal runs。Plugin 卸载和 runtime 更新默认保留 `.orch/`。
+- 文本证据只对当前配置的精确 OpenRouter Key 做替换；不声称通用秘密扫描，也不声称 raw worktree 或隔离 `CODEX_HOME` 已脱敏。
 - 持久 `external-workersd` 在空闲时只维持 loopback listener，不做状态采样、自动 provider 请求或自动派发；账户和公开跑分只接受用户主动刷新。只有活跃 external run 才有 RSS 采样。
+- v0.1.x 的一个 daemon 只服务 setup 时绑定的一个项目。第二个项目继续安全拒绝，不自动切换、不建设多项目 registry。
 - 目标是升级并融合进 `sol-worker-routing-codex`，不是长期维护平行路由项目。
 - 源码开发可使用 Codex local marketplace；面向其他开发者的公开 pre-release 使用 Git-backed marketplace。Plugin 包含 `aiworker-relay` Skill，不含 MCP server；2026-08-26 已在干净隔离 `CODEX_HOME` 中实测 `0.1.6 → 0.1.7 → 0.1.8` 更新与 runtime setup 收敛，并在推送后全新安装 `0.1.9`。2026-08-27 又在新的隔离 `CODEX_HOME` 从公开 Git Marketplace 安装 `0.1.16`，其 launcher 的 `setup --no-open` 与同项目、空闲的本机控制面回读 bundle/runtime/daemon 一致。该事实不等同于已发布正式版本，也不替代每种 Codex Desktop UI 更新交互的验收。
 - 公开 pre-release 源码仓库是 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。仓库公开不等于任意新 bundle 已自动到达用户本机；用户获得新 bundle 后仍须显式运行 `$aiworker-relay setup`。
@@ -96,8 +100,7 @@
 
 ### 4. 本地数据与秘密
 
-- 任务 prompt、stdout、diff 和 provider metadata 各自保留多久？
-- 哪些数据应默认红脱敏，哪些需要用户明确允许才可发送给外部 provider？
+- 哪些任务数据需要用户明确允许才可发送给外部 provider；哪些 provider privacy 标签应构成硬性禁止？
 - 用户级应用数据未来升级时的迁移规则是什么？
 - 模型 metadata（价格、隐私标签、跑分）的用户主动刷新和本地快照更新策略是什么？
 
@@ -106,8 +109,8 @@
 - 温和停止的等待时长、强制终止的确认方式和进程树处理规则是什么？
 - profile 冻结是否允许等待当前 run 完成，还是需要额外提供“冻结并停止”？
 - 本地 UI 与 Codex CLI 分别负责哪些操作入口；Codex Desktop 能否提供原生入口仍待验证。
-- macOS、Windows 和 Linux 的最低支持版本、密钥服务前置条件与进程终止验收矩阵是什么？
-- 多项目同时需要外部 worker 时，应复用一个真正的多项目控制面，还是要求显式切换？当前实现选择安全拒绝，尚未决定产品体验。
+- v0.1.x 之后若扩展 Windows / Linux，最低版本、密钥服务前置条件与进程终止验收矩阵是什么？
+- v0.1.x 之后若扩展多项目，应使用真正的多项目控制面还是显式切换？当前单项目安全拒绝不自动演进。
 - Codex 中“明确指定 Worker”的最终引导文案是什么，是否需要提供可复制示例？
 - 普通 Key 与 management Key 是否继续使用同一个设置字段，还是需要第二个可选入口？
 - 移动端是完整支持目标，还是只保证桌面浏览器的可用窄屏布局？

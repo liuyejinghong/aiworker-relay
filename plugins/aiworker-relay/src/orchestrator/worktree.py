@@ -75,6 +75,34 @@ def create_worktree(
     )
 
 
+def remove_worktree(project_root: Path, path: Path) -> None:
+    """Remove one Git-registered worktree without touching other worktrees.
+
+    The caller owns the product-level path and metadata checks.  This helper
+    only performs the narrow Git operation: a registered exact path is
+    removed through ``git worktree remove --force``; an existing unregistered
+    path is refused instead of being deleted as an ordinary directory.  A
+    missing, unregistered path is already gone and is therefore safe for a
+    retry after a partial deletion.
+    """
+
+    project_root = project_root.resolve()
+    expected = path.resolve(strict=False)
+
+    registered: set[Path] = set()
+    listing = _git(project_root, "worktree", "list", "--porcelain")
+    for line in listing.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        registered.add(Path(line[len("worktree ") :]).resolve(strict=False))
+
+    if expected in registered:
+        _git(project_root, "worktree", "remove", "--force", str(expected))
+        return
+    if expected.exists() or expected.is_symlink():
+        raise WorktreeError(f"worktree path is not registered with Git: {expected}")
+
+
 def changed_files(worktree: Path) -> list[str]:
     """Return paths reported by Git as changed in an external worktree."""
 

@@ -56,10 +56,13 @@ codex plugin add aiworker-relay@aiworker-relay
 
 外部 run 启动后，看板展示本地能够确认的事实：状态、开始时间、PID / 进程组、RSS、产物、费用归因状态和停止结果。v0.1 不持久化原始 CLI transcript，因此 token 要等有界来源建立后再展示。原生 Luna worker 只显示为“由 Codex 管理”，不伪造同类遥测。
 
+RSS 每 2 秒实时推送，但只保留最近 120 个样本以及全程 count、last、peak；单个 RSS 样本不触发磁盘持久化。Task Packet、最后消息、diff、events、run metadata、隔离 `CODEX_HOME` 与 detached worktree 默认保留在项目 `.orch/`，直到用户在运行详情或运行记录页显式删除 eligible terminal data。
+
 用户有两种不同操作：
 
 - 冻结 profile：阻止后续派发，保留已经运行的 task。
 - 停止当前 run：先发出温和停止；仍存活时，用户可以要求强制终止。看板必须显示实际退出结果。
+- 删除本地数据：active run 必须拒绝；terminal run 先通过 Git 移除对应 worktree，再删除 run evidence。删除操作不可恢复，Plugin 卸载和 runtime 更新不会代替用户执行它。
 
 ### 7. 由 Codex 完成验收
 
@@ -73,7 +76,7 @@ worker 返回结果、diff、测试和未解决项后，Codex 根据原始 Task 
 codex plugin remove external-workers@aiworker-local
 ```
 
-该命令移除 Codex 的旧 Plugin 配置和缓存；不会删除本项目源码、用户应用数据目录中的运行时，或系统钥匙串中的 OpenRouter Key。AIworker Relay 不保留旧 Skill 名称作为长期兼容层；它将从新的 `aiworker-relay` marketplace 安装面提供。
+该命令移除 Codex 的旧 Plugin 配置和缓存；不会删除本项目源码、用户应用数据目录中的运行时、系统钥匙串中的 OpenRouter Key，或项目 `.orch/`。AIworker Relay 不保留旧 Skill 名称作为长期兼容层；它将从新的 `aiworker-relay` marketplace 安装面提供。
 
 当前 runtime 更新规则见[更新与发布生命周期](update-lifecycle.md)：用户在获得新 Plugin bundle 后显式执行 `$aiworker-relay setup`；空闲 runtime 才会被可恢复地替换，活跃 external run 会让更新明确延后。Profile、钥匙串中的 Key 和项目 `.orch/` 证据不在这次替换中迁移或删除。Git marketplace 的 CLI bundle 更新已实测，仍不能仅根据命令名称推断未观察到的 Desktop UI 行为。
 

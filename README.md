@@ -41,6 +41,7 @@ The developer's explicit Profile choice always wins. In v0.1, each run uses that
 - Dispatch is consent-gated. AIworker Relay does not silently intercept work, substitute a model, lower reasoning effort, or auto-fallback after a failure.
 - A frozen worker refuses new dispatches and tells the user why; it does not silently select another model.
 - The dashboard is a local control surface, not a hosted service or a replacement for Codex.
+- The v0.1.x preview supports macOS and one project-bound daemon. Windows, Linux, multi-project control, actual-cost budgets, and independently verifiable worker test evidence are not release claims.
 
 ## Current release status
 
@@ -52,7 +53,7 @@ The repository deliberately does not claim features that are not implemented: au
 
 ## Security and data boundary
 
-OpenRouter API keys are stored only through the operating system's keyring service. An approved external run sends its bounded task context to the OpenRouter model selected by the user; model-specific privacy and retention terms remain the developer's responsibility to review. Runtime data lives locally under `.orch/` or the application-data directory and is excluded from version control.
+OpenRouter API keys are stored only through the operating system's keyring service. An approved external run sends its bounded task context to the OpenRouter model selected by the user; model-specific privacy and retention terms remain the developer's responsibility to review. Runtime data lives locally under `.orch/` or the application-data directory and is excluded from version control. Project run data is retained until the user explicitly deletes eligible terminal runs; uninstall and runtime updates preserve `.orch/`. Text evidence replaces the exact configured OpenRouter Key, but raw worktrees and isolated `CODEX_HOME` are not claimed to be sanitized.
 
 ## Documentation
 

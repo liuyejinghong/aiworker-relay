@@ -172,6 +172,9 @@ class RunRecord:
     error: str | None = None
     artifacts: dict[str, str] = field(default_factory=dict)
     rss_samples: list[dict[str, Any]] = field(default_factory=list)
+    rss_sample_count: int = 0
+    rss_last_bytes: int | None = None
+    rss_peak_bytes: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

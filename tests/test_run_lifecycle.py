@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from orchestrator.daemon import (
     APIError,
     DaemonState,
+    RSS_SAMPLE_LIMIT,
     _process_group_state,
     _process_start_value,
     _serve_until_clean_shutdown,
@@ -136,6 +137,105 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("files", record.artifacts)
             self.assertNotIn(record.run_id, state._processes)
             self.assertNotIn(record.run_id, state._tasks)
+
+    async def test_rss_sampling_keeps_window_summary_and_sse_without_sample_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state, record = self._state_and_record(Path(temporary))
+            run_dir = state.runs_root / record.run_id
+            (run_dir / "last-message.md").write_text("finished\n", encoding="utf-8")
+            process = FakeProcess()
+            packet = TaskPacket(record.run_id, {}, "# Task Packet\n")
+            persist = Mock(wraps=state._persist)
+            event = Mock(wraps=state._evidence[record.run_id].event)
+            broadcast = AsyncMock(wraps=state.broadcast)
+
+            async def start(**kwargs: object) -> FakeProcess:
+                callback = kwargs["rss_callback"]
+                for rss in range(1, RSS_SAMPLE_LIMIT + 6):
+                    await callback(rss)  # type: ignore[operator]
+                self.assertEqual(persist.call_count, 1)
+                return process
+
+            with (
+                patch("orchestrator.daemon.start_codex_run", new=start),
+                patch("orchestrator.daemon.psutil.Process") as process_probe,
+                patch("orchestrator.daemon.os.getpgid", return_value=process.pid),
+                patch("orchestrator.daemon.diff_text", return_value=""),
+                patch("orchestrator.daemon.changed_files", return_value=[]),
+                patch.object(state, "_persist", persist),
+                patch.object(state._evidence[record.run_id], "event", event),
+                patch.object(state, "broadcast", broadcast),
+            ):
+                process_probe.return_value.create_time.return_value = 123.0
+                await state._execute_run(record, packet, "test-key", Path(record.worktree))
+
+            self.assertEqual(len(record.rss_samples), RSS_SAMPLE_LIMIT)
+            self.assertEqual(
+                [sample["rss_bytes"] for sample in record.rss_samples],
+                list(range(6, RSS_SAMPLE_LIMIT + 6)),
+            )
+            self.assertEqual(record.rss_sample_count, RSS_SAMPLE_LIMIT + 5)
+            self.assertEqual(record.rss_last_bytes, RSS_SAMPLE_LIMIT + 5)
+            self.assertEqual(record.rss_peak_bytes, RSS_SAMPLE_LIMIT + 5)
+            self.assertEqual(
+                sum(call.args[0] == "rss.sample" for call in event.call_args_list), 0
+            )
+            self.assertEqual(
+                sum(call.args[0] == "run.rss" for call in broadcast.call_args_list),
+                RSS_SAMPLE_LIMIT + 5,
+            )
+            durable = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(durable["rss_samples"]), RSS_SAMPLE_LIMIT)
+            self.assertEqual(durable["rss_sample_count"], RSS_SAMPLE_LIMIT + 5)
+
+    async def test_legacy_rss_history_is_bounded_when_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state, record = self._state_and_record(root)
+            legacy = record.to_dict()
+            legacy.pop("rss_sample_count")
+            legacy.pop("rss_last_bytes")
+            legacy.pop("rss_peak_bytes")
+            legacy["rss_samples"] = [
+                {"at": "first", "rss_bytes": 1000},
+                *[
+                    {"at": str(value), "rss_bytes": value}
+                    for value in range(2, RSS_SAMPLE_LIMIT + 5)
+                ],
+            ]
+            (state.runs_root / record.run_id / "run.json").write_text(
+                json.dumps(legacy), encoding="utf-8"
+            )
+
+            loaded = DaemonState(
+                data_dir=root / "reloaded-app",
+                project_root=root,
+                codex_path="/usr/bin/true",
+            ).records[record.run_id]
+
+            self.assertEqual(len(loaded.rss_samples), RSS_SAMPLE_LIMIT)
+            self.assertEqual(loaded.rss_sample_count, RSS_SAMPLE_LIMIT + 4)
+            self.assertEqual(loaded.rss_last_bytes, RSS_SAMPLE_LIMIT + 4)
+            self.assertEqual(loaded.rss_peak_bytes, 1000)
+
+    async def test_invalid_legacy_rss_types_do_not_block_daemon_load(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state, record = self._state_and_record(root)
+            invalid = record.to_dict()
+            invalid["rss_samples"] = None
+            invalid["rss_sample_count"] = None
+            (state.runs_root / record.run_id / "run.json").write_text(
+                json.dumps(invalid), encoding="utf-8"
+            )
+
+            reloaded = DaemonState(
+                data_dir=root / "reloaded-app",
+                project_root=root,
+                codex_path="/usr/bin/true",
+            )
+
+            self.assertNotIn(record.run_id, reloaded.records)
 
     async def test_broadcast_delivers_one_payload_per_subscriber(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
