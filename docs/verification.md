@@ -83,7 +83,7 @@
 
 因此，v0.1.16 已修复并验证 LaunchAgent 对 Node 包装的 Codex CLI 的本机启动前提；NVIDIA 的最小真实 external write、隔离、证据回读和 TERM 停止联动均已通过。Profile 仍显示 `unverified`，不是本次验收失败，而是当前产品尚未接受“哪些能力足以晋级”及对应写入操作；不能在没有该规则时静默改变用户的长期 Profile 状态。
 
-## 2026-08-27 runner permission profile 修正
+## 2026-08-28 runner permission profile 修正
 
 本次源码修正针对独立审查确认的两条安全边界：普通 shell 显式读取真实 HOME 可恢复 Secret，以及项目 `.codex/config.toml` 可覆盖较低优先级的 shell policy / reasoning。它没有切换模型、Profile 或 Provider，也没有发布或部署。
 
