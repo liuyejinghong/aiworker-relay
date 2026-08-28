@@ -240,7 +240,7 @@ FastAPI/Uvicorn plus a separate frontend server, React or Electron, a permanent 
 
 Consequences:
 
-`external-workersd` is a Python 3.12+ process using `asyncio` and `aiohttp`; it serves static Web assets, HTTP operations, SSE status events, and external run supervision. It starts on demand, remains alive while a browser client or external run exists, then exits after 60 seconds of inactivity. The Web UI uses static HTML, CSS, and JavaScript; status is pushed through SSE and mutations use HTTP `POST`.
+`external-workersd` is a Python 3.12+ process using `asyncio` and `aiohttp`; it serves static Web assets, HTTP operations, SSE status events, and external run supervision. It starts on demand, remains alive while a browser client or external run exists, then exits after 60 seconds of inactivity. The Web UI uses static HTML, CSS, and JavaScript; status is pushed through SSE and mutations use protected HTTP write methods.
 
 `psutil` is used only for external run RSS observation and process-tree termination. Active external runs are sampled every two seconds; native Codex workers are never locally sampled. On POSIX, runs use independent process groups; on Windows, they use a new process group and recursive process-tree handling.
 
