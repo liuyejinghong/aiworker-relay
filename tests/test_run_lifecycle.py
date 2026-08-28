@@ -218,6 +218,25 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(loaded.rss_last_bytes, RSS_SAMPLE_LIMIT + 4)
             self.assertEqual(loaded.rss_peak_bytes, 1000)
 
+    async def test_invalid_legacy_rss_types_do_not_block_daemon_load(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state, record = self._state_and_record(root)
+            invalid = record.to_dict()
+            invalid["rss_samples"] = None
+            invalid["rss_sample_count"] = None
+            (state.runs_root / record.run_id / "run.json").write_text(
+                json.dumps(invalid), encoding="utf-8"
+            )
+
+            reloaded = DaemonState(
+                data_dir=root / "reloaded-app",
+                project_root=root,
+                codex_path="/usr/bin/true",
+            )
+
+            self.assertNotIn(record.run_id, reloaded.records)
+
     async def test_broadcast_delivers_one_payload_per_subscriber(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state, _ = self._state_and_record(Path(temporary))

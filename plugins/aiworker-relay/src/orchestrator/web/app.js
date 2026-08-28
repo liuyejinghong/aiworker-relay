@@ -1,6 +1,7 @@
 (function () {
   "use strict";
   const page = document.body.dataset.page || "overview";
+  let deletingRunData = false;
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (v) =>
     String(v ?? "").replace(
@@ -169,9 +170,9 @@
   function runDataControls(o) {
     const policy = o.data_policy || {};
     const root = policy.runtime_root || ".orch/";
-    const count = (o.runs || []).filter((run) =>
-      deletableRunStates.has(run.status),
-    ).length;
+    const count = Number.isInteger(o.deletable_run_count)
+      ? o.deletable_run_count
+      : (o.runs || []).filter((run) => deletableRunStates.has(run.status)).length;
     return `<section class="section">${card(
       "本地数据",
       `<p>运行证据、隔离环境和 worktree 保留在 <strong class="model-slug">${esc(root)}</strong>，直到你手动删除。Plugin 更新或卸载不会删除这些数据。</p>${count ? `<div style="margin-top:16px"><button class="button button-danger button-small" data-delete-runs>删除全部已结束数据</button></div>` : ""}`,
@@ -707,6 +708,7 @@
       const confirmDeleteRuns = e.target.closest("[data-confirm-delete-runs]");
       if (confirmDeleteRuns) {
         confirmDeleteRuns.disabled = true;
+        deletingRunData = true;
         try {
           const result = await api("/api/runs", {
             method: "DELETE",
@@ -717,6 +719,7 @@
           }
           location.reload();
         } catch (err) {
+          deletingRunData = false;
           confirmDeleteRuns.disabled = false;
           alert(err.message);
         }
@@ -730,6 +733,7 @@
       const confirmDeleteRun = e.target.closest("[data-confirm-delete-run]");
       if (confirmDeleteRun) {
         confirmDeleteRun.disabled = true;
+        deletingRunData = true;
         try {
           await api(
             "/api/runs/" + encodeURIComponent(confirmDeleteRun.dataset.confirmDeleteRun),
@@ -737,6 +741,7 @@
           );
           location.href = "runs.html";
         } catch (err) {
+          deletingRunData = false;
           confirmDeleteRun.disabled = false;
           alert(err.message);
         }
@@ -797,6 +802,7 @@
       "run.deleted",
     ].forEach((n) =>
       s.addEventListener(n, () => {
+        if (n === "run.deleted" && deletingRunData) return;
         if (n !== "run.rss") location.reload();
       }),
     );

@@ -208,10 +208,19 @@ class RunDeletionTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(run_dir.exists())
             self.assertTrue(worktree.exists())
 
+            code_home = run_dir / "CODEX_HOME"
+            code_home.mkdir()
+            partial = code_home / "partial.txt"
+            partial.write_text("partial\n", encoding="utf-8")
+
+            def fail_after_partial_delete(path: Path) -> None:
+                (path / "partial.txt").unlink()
+                raise OSError("disk busy")
+
             with (
                 patch(
                     "orchestrator.daemon.shutil.rmtree",
-                    side_effect=OSError("disk busy"),
+                    side_effect=fail_after_partial_delete,
                 ),
                 self.assertRaises(APIError) as context,
             ):
@@ -219,11 +228,73 @@ class RunDeletionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(context.exception.code, "run_delete_failed")
             self.assertIn(record.run_id, state.records)
             self.assertTrue(run_dir.exists())
+            self.assertTrue((run_dir / "run.json").exists())
             self.assertFalse(worktree.exists())
 
             await state.delete_run(record.run_id)
             self.assertNotIn(record.run_id, state.records)
             self.assertFalse(run_dir.exists())
+
+    async def test_worktree_root_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._init_repo(root)
+            state = self._state(root)
+            worktrees_root = state.runtime_root / "worktrees"
+            worktrees_root.write_text("not a directory\n", encoding="utf-8")
+            record = RunRecord(
+                run_id="blocked",
+                profile_id="profile",
+                model="provider/model",
+                status="succeeded",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                project_root=str(state.project_root),
+                worktree=str(worktrees_root / "blocked"),
+            )
+            evidence = EvidenceStore(state.runs_root / record.run_id)
+            evidence.write_run(record)
+            state.records[record.run_id] = record
+            state._evidence[record.run_id] = evidence
+
+            with self.assertRaises(APIError) as context:
+                await state.delete_run(record.run_id)
+
+            self.assertEqual(context.exception.code, "run_delete_refused")
+            self.assertTrue(evidence.run_file.exists())
+
+    async def test_deletable_count_includes_records_outside_overview_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._init_repo(root)
+            state = self._state(root)
+            terminal = RunRecord(
+                run_id="terminal",
+                profile_id="profile",
+                model="provider/model",
+                status="succeeded",
+                created_at="a",
+                updated_at="a",
+                project_root=str(state.project_root),
+            )
+            state.records[terminal.run_id] = terminal
+            for index in range(100):
+                record = RunRecord(
+                    run_id=f"active-{index}",
+                    profile_id="profile",
+                    model="provider/model",
+                    status="running",
+                    created_at=f"z-{index:03}",
+                    updated_at=f"z-{index:03}",
+                    project_root=str(state.project_root),
+                )
+                state.records[record.run_id] = record
+
+            overview = state.overview()
+
+            self.assertEqual(len(overview["runs"]), 100)
+            self.assertNotIn("terminal", {run["run_id"] for run in overview["runs"]})
+            self.assertEqual(overview["deletable_run_count"], 1)
 
     async def test_corrupt_run_metadata_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -331,5 +402,7 @@ class RunDeletionUITests(unittest.TestCase):
         self.assertIn('method: "DELETE"', app)
         self.assertIn("data-confirm-delete-run", app)
         self.assertIn("data-confirm-delete-runs", app)
+        self.assertIn("deletingRunData", app)
+        self.assertIn('n === "run.deleted" && deletingRunData', app)
         self.assertIn("手动删除前一直保留", app)
         self.assertIn("Plugin 更新或卸载不会删除", app)

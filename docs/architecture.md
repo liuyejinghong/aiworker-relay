@@ -49,7 +49,7 @@ v0.1.x 公开预览只支持 macOS，并保持一个持久 daemon 绑定一个�
 | 本机网络边界 | loopback `127.0.0.1` | Web、SSE 和控制 API 仅服务本机；launcher 通过原子 `daemon.json` 检查、复用或清理失效 daemon 记录。记录绑定一个项目根目录，不同项目会拒绝复用，避免误派 worktree。 |
 | 后端 | Python 3.12+、`asyncio`、`aiohttp` | `asyncio` 负责外部 CLI 的异步生命周期；`aiohttp` 只负责本机 HTTP、静态资源和 SSE，避免手写 HTTP 协议或引入 FastAPI/Uvicorn 组合。 |
 | 页面 | 静态 HTML、CSS、原生 JavaScript | 不引入 React、构建链、Node 常驻进程或桌面壳。现有原型可直接演进为页面资源。 |
-| 实时更新 | SSE 推送状态，HTTP `POST` 执行操作 | 看板主要接收状态；用户只是偶尔保存设置、冻结 profile 或停止 run，因此不需要 WebSocket 或短周期全量轮询。 |
+| 实时更新 | SSE 推送状态，HTTP 写请求执行操作 | 看板主要接收状态；用户只是偶尔保存设置、冻结 profile、停止 run 或删除 terminal data，因此不需要 WebSocket 或短周期全量轮询。 |
 | 进程观测与停止 | `asyncio` + `psutil` | 只对外部 run 读取 `rss`，默认每 2 秒一次；SSE 实时推送，但记录只保留最近 120 个样本及全程 count / last / peak，不为每个样本执行磁盘持久化。只在停止时枚举进程树。 |
 | 密钥 | `keyring` | 写入系统 Keychain、Windows Credential Locker 或 Linux Secret Service；密钥服务不可用时设置失败并说明原因，不回退到明文文件。 |
 | Provider HTTPS | `truststore` | 对 OpenRouter 请求使用操作系统证书库，不关闭 TLS 校验，也不假设 Python 自带 CA bundle 已正确安装。 |

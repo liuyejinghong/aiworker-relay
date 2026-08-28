@@ -66,6 +66,19 @@ def _bound_rss(record: RunRecord) -> None:
     """Keep current and legacy RSS records within the accepted window."""
 
     samples = record.rss_samples
+    if not isinstance(samples, list):
+        raise ValueError("rss_samples must be a list")
+    if (
+        not isinstance(record.rss_sample_count, int)
+        or isinstance(record.rss_sample_count, bool)
+        or record.rss_sample_count < 0
+    ):
+        raise ValueError("rss_sample_count must be a non-negative integer")
+    for value in (record.rss_last_bytes, record.rss_peak_bytes):
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            raise ValueError("RSS summaries must be non-negative integers")
     values = [
         sample.get("rss_bytes")
         for sample in samples
@@ -733,9 +746,9 @@ class DaemonState:
                 continue
             try:
                 record = RunRecord.from_dict(value)
+                _bound_rss(record)
             except (KeyError, TypeError, ValueError):
                 continue
-            _bound_rss(record)
             self.records[record.run_id] = record
             self._evidence[record.run_id] = EvidenceStore(run_file.parent)
 
@@ -1378,7 +1391,31 @@ class DaemonState:
                 "run data contains a symbolic link at a protected boundary",
                 status=409,
             )
-        if not run_dir.is_dir() or not (run_dir / "run.json").is_file():
+        if worktrees_root.exists() and not worktrees_root.is_dir():
+            raise APIError(
+                "run_delete_refused",
+                "worktree root is not a directory",
+                status=409,
+            )
+        if not run_dir.is_dir():
+            raise APIError(
+                "run_delete_refused",
+                "run evidence metadata is missing",
+                status=409,
+            )
+
+        run_file = run_dir / "run.json"
+        if not run_file.is_file():
+            try:
+                empty = not any(run_dir.iterdir())
+            except OSError as exc:
+                raise APIError(
+                    "run_delete_refused",
+                    "run evidence metadata could not be inspected",
+                    status=409,
+                ) from exc
+            if empty:
+                return run_dir, worktree
             raise APIError(
                 "run_delete_refused",
                 "run evidence metadata is missing",
@@ -1386,7 +1423,7 @@ class DaemonState:
             )
 
         try:
-            stored = read_json(run_dir / "run.json")
+            stored = read_json(run_file)
             stored_record = (
                 RunRecord.from_dict(stored) if isinstance(stored, dict) else None
             )
@@ -1471,7 +1508,7 @@ class DaemonState:
                 ) from exc
 
             try:
-                await asyncio.to_thread(shutil.rmtree, run_dir)
+                await asyncio.to_thread(self._remove_run_evidence, run_dir)
             except OSError as exc:
                 raise APIError(
                     "run_delete_failed",
@@ -1486,6 +1523,21 @@ class DaemonState:
             self._lifecycle_changed.set()
             await self._try_broadcast("run.deleted", run_id=run_id)
             return {"deleted": [run_id], "failed": []}
+
+    @staticmethod
+    def _remove_run_evidence(run_dir: Path) -> None:
+        """Remove evidence while keeping run.json as the retry identity."""
+
+        run_file = run_dir / "run.json"
+        for path in run_dir.iterdir():
+            if path == run_file:
+                continue
+            if path.is_symlink() or not path.is_dir():
+                path.unlink()
+            else:
+                shutil.rmtree(path)
+        run_file.unlink(missing_ok=True)
+        run_dir.rmdir()
 
     async def delete_runs(self) -> dict[str, Any]:
         """Attempt each loaded run independently for a batch delete."""
@@ -1506,13 +1558,20 @@ class DaemonState:
         records = sorted(
             self.records.values(), key=lambda value: value.updated_at, reverse=True
         )
+        active_run_ids = list(self.active_run_ids())
+        active = set(active_run_ids)
         return {
             "version": __version__,
             "profiles": [
                 self._profile_payload(profile) for profile in self.profiles.all()
             ],
             "runs": [self._record_payload(record) for record in records[:100]],
-            "active_run_ids": list(self.active_run_ids()),
+            "active_run_ids": active_run_ids,
+            "deletable_run_count": sum(
+                record.status in DELETABLE_RUN_STATUSES
+                and record.run_id not in active
+                for record in records
+            ),
             "native_workers": [dict(worker) for worker in NATIVE_WORKER_DECLARATIONS],
             "cost_attribution": "pending_or_unavailable",
             "data_policy": {
