@@ -245,7 +245,26 @@ class BootstrapSmokeTests(unittest.TestCase):
         self.assertEqual(source["source"], "git-subdir")
         self.assertEqual(source["url"], "https://github.com/liuyejinghong/aiworker-relay.git")
         self.assertEqual(source["path"], "./plugins/aiworker-relay")
-        self.assertEqual(source["ref"], "main")
+        self.assertNotIn("ref", source)
+        release_sha = source["sha"]
+        self.assertRegex(release_sha, r"^[0-9a-f]{40}$")
+        plugin_diff = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--quiet",
+                release_sha,
+                "--",
+                "plugins/aiworker-relay",
+            ],
+            cwd=REPOSITORY_ROOT,
+            check=False,
+        )
+        self.assertEqual(
+            plugin_diff.returncode,
+            0,
+            "marketplace source SHA does not select the current reviewed Plugin bytes",
+        )
 
     def test_version_command(self) -> None:
         output = io.StringIO()

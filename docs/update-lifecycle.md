@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.19 为当前源码候选；v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 把 source fingerprint 纳入 bundle/runtime/daemon 收敛，并为 macOS arm64/x86_64、标准 CPython 3.12/3.13/3.14 固定 hash-checked build/runtime set，但尚未安装、打 tag 或发布。v0.1.17 在 Provider 前暴露的 strict-config project-trust override 缺陷已由 v0.1.18 安装态 run `b221a85785fd4cf6b618f07ca416068d` 闭环。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
+状态：v0.1.19 的 reviewed Plugin source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；release-catalog 候选已用 exact `sha` 指向它，并通过隔离 Codex CLI 安装。v0.1.18 仍是真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。v0.1.19 把 source fingerprint 纳入 bundle/runtime/daemon 收敛，并为 macOS arm64/x86_64、标准 CPython 3.12/3.13/3.14 固定 hash-checked build/runtime set。当前仍待 main ruleset 和 Codex Desktop 更新行为验收；尚未打 tag 或创建 GitHub Release。
 
 ## 为什么需要这一项
 
@@ -138,11 +138,13 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 
 在 local alpha 验收后，使用同一仓库或专门 marketplace 仓库的 Git-backed marketplace。官方格式可将 Plugin 子目录作为 `git-subdir` source，并使用 `ref` 或 `sha` selector。[OpenAI 插件打包文档](https://developers.openai.com/plugins/build/plugins)
 
-`main` 继续只代表明确可变的 pre-release。稳定渠道的 release catalog 必须在一个独立、受保护的 channel/tag commit 中，把 Plugin source 指向已经通过 required checks 的精确 Git SHA；发布证据同时记录该 SHA、安装后 fingerprint 与依赖锁身份。这样 Git SHA 负责审查 provenance，fingerprint 负责本机 bytes 收敛，两者不是互相替代的平行版本系统。该仓库设置、stable ref、tag 与 Release 尚未创建。
+`main` 作为唯一 release-producing catalog branch，但不直接充当 Plugin source selector。Plugin 源码先由普通 PR 合并成一个不可变 commit；只有在该 commit 的受支持矩阵、安装证据与独立审查通过后，单独的 catalog PR 才把 `sha` 前移到它。这样 catalog 可以正常演进，而任一已发布 Plugin 的 bytes 不会因后续 `main` 推送漂移。发布证据同时记录 Git SHA、安装后 fingerprint 与依赖锁身份；Git provenance 与本机 bytes 收敛各自承担一个必要事实。
+
+在 catalog PR 合并前，`main` 必须启用 active ruleset：所有变更经 PR；六个 `tests (macos-14|macos-15-intel, 3.12|3.13|3.14)` check 严格通过且 branch 与 base 同步；禁止 branch deletion 与 force-push。个人仓库不增加无法由作者自身满足的一人审批要求，也不配置可直接绕过这些条件的例外。tag 与 GitHub Release 仍是另外的发布动作，不是 source immutability 的替代品。
 
 推荐产品动作保持两步：
 
-1. 用户在 Codex 中刷新 marketplace 并接受可用的 Plugin 更新；
+1. 用户在 Codex 中刷新 marketplace catalog，并在安装面接受该 catalog 暴露的 exact-SHA Plugin；
 2. 用户下次需要本地控制面时执行 `$aiworker-relay setup`，它完成应用级 runtime 收敛。
 
 公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。2026-08-26 的干净隔离验收已实际执行上述安装路径，并从 `0.1.6` 连续升级至 `0.1.7`、`0.1.8`；推送后又从同一 Git marketplace 全新安装 `0.1.9`。2026-08-27 在新的隔离 `CODEX_HOME` 安装 `0.1.16` 后，其 launcher 的 `setup --no-open` 回读 bundle/runtime/daemon 版本一致、固定持久 endpoint 为空闲。此处复用了同项目的现有用户级控制面；因为 macOS 的 LaunchAgent 标签唯一，不宣称已在同一登录用户下创建第二个隔离 daemon。它验证的是 CLI marketplace 路径，不把未单独观察的 Codex Desktop 更新交互写成既成事实。本提案不添加自研 updater 来绕开 Codex 的安装面。
@@ -162,7 +164,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 
 ### P1 — 真实分发验收
 
-已完成的窄证据：干净 `CODEX_HOME` 已成功添加 marketplace、安装 `0.1.6` bundle、两次执行 marketplace upgrade，并经 setup 把应用级 runtime 收敛至对应 bundle。该验收没有借助自定义安装器，也没有读取或复制用户 Key。
+已完成的历史窄证据：干净 `CODEX_HOME` 已成功添加 marketplace、安装 `0.1.6` bundle、两次执行 marketplace upgrade，并经 setup 把应用级 runtime 收敛至对应 bundle。当前 exact-SHA v0.1.19 candidate 也已在干净 `CODEX_HOME` 完成隔离 CLI 安装与版本/指纹回读；该验收未借助自定义安装器，也未读取或复制用户 Key。真实 Desktop 更新与回滚验收仍待后续明确授权。
 
 1. 在干净 Codex 用户状态安装旧 bundle，保存测试 Profile 与 Key 状态；
 2. 通过真实 marketplace 路径获得新 bundle；
@@ -192,6 +194,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 5. 用户只需使用 Codex 的 Plugin 安装面和已有 `$aiworker-relay setup`，不需要 pip、手动 venv 操作或复制 Key；
 6. 对实际 Codex marketplace 更新行为有一次端到端观察记录，而非依据 CLI 名称推断；当前已具备 CLI 观察记录，Desktop 特有交互另行记录。
 7. 同一受审查 bundle 在 macOS arm64/x86_64 的 Python 3.12、3.13、3.14 上只接受 lock 中的 wheel hashes；fresh install 的 identity 回读 lock、Python 与完整 package set，依赖更新必须形成新的受审查源码 diff。
+8. catalog 只通过 exact `sha` 选择与当前 release version 相同、Plugin bytes 无差异的 reviewed commit；main ruleset 要求 PR、六路 CI、禁止删除和 force-push。
 
 ## 仍需用户确认的产品选择
 
