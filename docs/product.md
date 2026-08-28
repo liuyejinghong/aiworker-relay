@@ -1,6 +1,6 @@
 # 产品定义：Codex 外部 Worker Plugin
 
-状态：v0.1.18 为当前已安装的 pre-release 源码候选，包含固定持久本机控制面、应用级 runtime 收敛、显式本地 run 数据删除、bounded RSS 与 run-scoped permission profile。v0.1.17 的首次 NVIDIA run 在 Provider 前因 strict-config project-trust override 不兼容而失败，没有写文件或自动重试；v0.1.18 的用户授权 run `b221a85785fd4cf6b618f07ca416068d` 已完成唯一 marker 写入、diff/files 回读和温和 `term_exited` 停止。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。NVIDIA Profile 的 `verified` 晋级仍依赖尚未接受的能力标准，不能静默变更。
+状态：v0.1.19 为当前源码候选，v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在固定持久本机控制面、应用级 runtime 收敛、显式本地 run 数据删除、bounded RSS 与 run-scoped permission profile 上增加确定性 source fingerprint；它尚未安装或发布。v0.1.17 的首次 NVIDIA run 在 Provider 前因 strict-config project-trust override 不兼容而失败，没有写文件或自动重试；v0.1.18 的用户授权 run `b221a85785fd4cf6b618f07ca416068d` 已完成唯一 marker 写入、diff/files 回读和温和 `term_exited` 停止。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。NVIDIA Profile 的 `verified` 晋级仍依赖尚未接受的能力标准，不能静默变更。
 
 ## 一句话
 

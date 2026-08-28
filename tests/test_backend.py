@@ -103,6 +103,7 @@ class ProfileAndPacketTests(unittest.TestCase):
             app_data = root / "app-data"
             first_project = root / "first-project"
             second_project = root / "second-project"
+            source_fingerprint = f"sha256:{'1' * 64}"
             first_project.mkdir()
             second_project.mkdir()
             atomic_write_json(
@@ -113,11 +114,18 @@ class ProfileAndPacketTests(unittest.TestCase):
                     "project_root": str(first_project),
                     "runtime_root": str(first_project / ".orch"),
                     "version": __version__,
+                    "source_fingerprint": source_fingerprint,
                     "persistent": False,
                     "capability": "test-capability",
                 },
             )
-            with patch("orchestrator.cli._health", return_value=True):
+            with (
+                patch("orchestrator.cli._health", return_value=True),
+                patch(
+                    "orchestrator.cli.runtime_source_fingerprint",
+                    return_value=source_fingerprint,
+                ),
+            ):
                 with self.assertRaisesRegex(CLIError, "already active for"):
                     ensure_daemon(data_dir=app_data, project_root=second_project)
                 self.assertEqual(
@@ -144,6 +152,39 @@ class ProfileAndPacketTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(CLIError, "no capability"):
                     ensure_daemon(data_dir=root / "app-data", project_root=project)
+            popen.assert_not_called()
+
+    def test_cli_does_not_reuse_live_daemon_when_source_identity_is_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            atomic_write_json(
+                root / "app-data" / "daemon.json",
+                {
+                    "pid": os.getpid(),
+                    "port": 43210,
+                    "project_root": str(project.resolve()),
+                    "runtime_root": str(project.resolve() / ".orch"),
+                    "version": __version__,
+                    "source_fingerprint": None,
+                    "persistent": False,
+                    "capability": "test-capability",
+                },
+            )
+            with (
+                patch("orchestrator.cli._process_state", return_value=True),
+                patch(
+                    "orchestrator.cli.runtime_source_fingerprint", return_value=None
+                ),
+                patch("orchestrator.cli._health") as health,
+                patch("orchestrator.cli.subprocess.Popen") as popen,
+                self.assertRaisesRegex(CLIError, "identity cannot be verified"),
+            ):
+                ensure_daemon(data_dir=root / "app-data", project_root=project)
+            health.assert_not_called()
             popen.assert_not_called()
 
     def test_key_validation_uses_the_authenticated_key_endpoint(self) -> None:
@@ -824,6 +865,7 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
                 state._daemon_record()["project_root"], str(Path(temporary).resolve())
             )
             self.assertTrue(state._daemon_record()["persistent"])
+            self.assertIn("source_fingerprint", state._daemon_record())
             static = Path(temporary) / "web"
             static.mkdir()
             (static / "styles.css").write_text("body {}", encoding="utf-8")
@@ -850,6 +892,7 @@ class LocalAPIQualifyingTests(unittest.IsolatedAsyncioTestCase):
                 health = await response.json()
                 self.assertTrue(health["ok"])
                 self.assertTrue(health["persistent"])
+                self.assertIn("source_fingerprint", health)
                 self.assertEqual(health["project_root"], str(Path(temporary).resolve()))
                 self.assertEqual(
                     health["runtime_root"],

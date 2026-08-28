@@ -87,9 +87,12 @@
 
 本次源码修正针对独立审查确认的两条安全边界：普通 shell 显式读取真实 HOME 可恢复 Secret，以及项目 `.codex/config.toml` 可覆盖较低优先级的 shell policy / reasoning。它没有切换模型、Profile 或 Provider，也没有发布或部署。
 
+v0.1.19 另修正同 version / 不同 source 仍被判为 `up_to_date` 的更新缺陷。该验证只在临时目录安装 candidate 并启动临时随机端口 daemon；未读取 Key/Profile，未接触真实 `127.0.0.1:49178` 控制面。
+
 | 验证点 | 结果 | 证据与边界 |
 | --- | --- | --- |
-| 完整 Python 回归 | 通过 | 2026-08-28 在最新候选上，应用级 venv 执行 `unittest discover -s tests -v`，124 项通过；首次受当前父沙箱限制的 loopback bind 失败，授权本机 loopback 后同一套测试通过。 |
+| 完整 Python 回归 | 通过 | 2026-08-28 在 v0.1.19 源码候选上，应用级 venv 执行 `unittest discover -s tests`，128 项通过；需要 loopback 的测试在授权本机临时端口后通过。Ruff 聚焦检查同时通过。 |
+| source identity 临时真实链路 | 通过 | v0.1.19 launcher 在临时目录创建全新 venv 并真实安装当前 Plugin source，随后启动随机 loopback 端口 daemon。bundle、venv `.aiworker-release.json`、installed runtime、`daemon.json` 与 `/api/health` 均回读 `sha256:f11157d4885da9da17e37ffaa82afefb50a4e5ca6b7619805b094439e45e91e5`；受控 shutdown 退出码 0。该 fingerprint 只对应本次未提交源码候选，后续 Plugin 文件变化会产生新值。 |
 | permission profile 真实哨兵 | 通过 | macOS Codex 0.149 的 `codex sandbox -P aiworker` 可运行直接 Command Line Tools Git、Homebrew `rg` / `node` 与 Python，可写 detached worktree 和 run-scoped HOME，并通过 `git status` / `git rev-parse --git-common-dir`。显式读取真实 `.zshrc`、主 checkout 与 source index 均被拒绝，假 OpenRouter Key 未进入工具环境；向主 checkout `.orch/outside-worktree-sentinel` 的固定越界写被 OS sandbox 拒绝，命令网络为 disabled。 |
 | Homebrew 读取边界 | 通过 | 2026-08-28 收窄后只放行实际 PATH 目录、Homebrew `Cellar` / `opt` / 全局 CLI package 树，不再放行整个 `/opt/homebrew` 或 `/usr/local`。Codex 0.149 真实 sandbox 中 Node、`rg`、Python 与 Command Line Tools Git 均可运行；`/opt/homebrew/var/mysql/server-key.pem` 的固定读取被拒绝，未打印其内容。 |
 | project-config precedence | 通过 | worktree 临时加入尝试开启 danger-full-access、login shell、full env inheritance、Key include 和低 reasoning 的 `.codex/config.toml`；`codex debug prompt-input` 回读仍为 deny-by-default `aiworker` profile 与固定 writable roots，未出现 danger-full-access，且 `AGENTS.md` 继续加载。临时恶意配置未进入提交。 |

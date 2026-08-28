@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.18 为当前已安装的 pre-release 源码候选，已实现固定持久本机控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile。v0.1.17 的首次 NVIDIA run 在 Provider 前因 Codex 0.149 strict-config 不接受动态 project-trust CLI override 而失败，没有写文件或自动重试；v0.1.18 修正后，run `b221a85785fd4cf6b618f07ca416068d` 已在 detached worktree 创建唯一 34-byte marker，diff/files 完整回读，并由受管 TERM 收敛为 `term_exited`、退出码 0。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
+状态：v0.1.19 为当前源码候选，v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在既有固定持久控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile 上，增加 bundle/runtime/daemon 的确定性 source fingerprint 收敛；它尚未安装、打 tag 或发布。v0.1.17 的首次 NVIDIA run 在 Provider 前因 Codex 0.149 strict-config 不接受动态 project-trust CLI override 而失败，没有写文件或自动重试；v0.1.18 修正后，run `b221a85785fd4cf6b618f07ca416068d` 已在 detached worktree 创建唯一 34-byte marker，diff/files 完整回读，并由受管 TERM 收敛为 `term_exited`、退出码 0。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
 
 ## 核心原则
 
@@ -13,6 +13,8 @@
 正式分发单元是 **AIworker Relay** Codex Plugin，核心入口是 `aiworker-relay` Skill。Plugin 解决“如何把这项能力交给 Codex”；Skill 解决“Codex 何时可使用这项能力”；本地控制面解决“如何配置与监管外部资源”。它们不是三套平行产品。
 
 仓库根目录的 `.agents/plugins/marketplace.json` 是公开 Git marketplace catalog，并以 `git-subdir` 指向同一仓库内的 `./plugins/aiworker-relay`。该目录是唯一可安装的 Plugin source，内含 `.codex-plugin/plugin.json`、Skill、launcher、`pyproject.toml` 与 Python runtime；仓库根目录保留产品文档、图与开发测试材料。它不是第二份 runtime，也不依赖仓库外的全局 Python 包。local marketplace 只保留给源码开发，不作为面向普通开发者的发布说明。
+
+setup 对该唯一 Plugin source 的全部分发文件计算一个确定性 `sha256` fingerprint；Python bytecode、build 目录和 egg metadata 等 setup 可再生文件不参与。launcher 将 version 与 fingerprint 一起写入新 venv 的 release identity，daemon record、health 与 overview 回读同一身份。同 version 但 fingerprint 不同、身份缺失或三者不一致都要求重新 setup；活跃 run 仍只延后更新而不会被停止。fingerprint 用于本机内容收敛，稳定发布仍必须另外用受控 Git source SHA 证明这些 bytes 来自哪个已审查 commit。
 
 首次配置从一个新的 Codex task 中调用 `$aiworker-relay setup` 开始，随后由 Skill 打开本机 Web 控制面。API Key 与 worker Profile 只在这个 Web 控制面中配置；Skill、Codex 对话与普通 CLI 不接收这些配置值。之后用户仍像平时一样把任务交给 Codex：可以明确指定 profile，也可以接受 Codex 的建议。外部付费用量的派发不应通过不可见的全局拦截发生。
 
