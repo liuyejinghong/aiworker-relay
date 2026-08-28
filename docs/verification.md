@@ -89,9 +89,10 @@
 
 | 验证点 | 结果 | 证据与边界 |
 | --- | --- | --- |
-| 完整 Python 回归 | 通过 | 应用级 venv 执行 `unittest discover -s tests -v`，40 项通过；首次受当前父沙箱限制的 loopback bind 失败，授权本机临时 loopback 后同一套测试通过。 |
+| 完整 Python 回归 | 通过 | 2026-08-28 在最新 `main` 重建候选后，应用级 venv 执行 `unittest discover -s tests -v`，122 项通过；首次受当前父沙箱限制的 loopback bind 失败，授权本机 loopback 后同一套测试通过。 |
 | permission profile 真实哨兵 | 通过 | macOS Codex 0.149 的 `codex sandbox -P aiworker` 可运行直接 Command Line Tools Git、Homebrew `rg` / `node` 与 Python，可写 detached worktree 和 run-scoped HOME，并通过 `git status` / `git rev-parse --git-common-dir`。显式读取真实 `.zshrc`、主 checkout 与 source index 均被拒绝，假 OpenRouter Key 未进入工具环境；向主 checkout `.orch/outside-worktree-sentinel` 的固定越界写被 OS sandbox 拒绝，命令网络为 disabled。 |
 | project-config precedence | 通过 | worktree 临时加入尝试开启 danger-full-access、login shell、full env inheritance、Key include 和低 reasoning 的 `.codex/config.toml`；`codex debug prompt-input` 回读仍为 deny-by-default `aiworker` profile 与固定 writable roots，未出现 danger-full-access，且 `AGENTS.md` 继续加载。临时恶意配置未进入提交。 |
+| host temp 隔离 | 未通过，保留为发布边界 | 2026-08-28 以临时安装且不替换全局 CLI 的 Codex `0.151.0-alpha.7` 复跑固定假 sentinel：detached worktree 与 run HOME 可写，source checkout 读写、普通真实 HOME 读取和工具网络被拒绝，但 `/private/tmp` 的既有假 sentinel 仍可读，固定 host-temp 路径仍可写。去掉 `:minimal` 会使 sandbox 进程退出，增加 canonical temp deny 也不改变结果；不再重复堆叠 deny 规则。 |
 | Provider runtime 回读 | 待执行 | 当前只验证假 Key 与无 Provider 的真实 Codex sandbox/effective-context；必须在新源码进入安装 runtime 后，用用户现有明确选择的 Profile 完成一次真实认证与最小 write，才能声称 provider 进程仍可认证且新 runner 已端到端生效。 |
 
 ## 已验证结论

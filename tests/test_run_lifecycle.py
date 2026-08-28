@@ -123,7 +123,24 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("orchestrator.daemon.changed_files", return_value=[]),
         ):
             process_probe.return_value.create_time.return_value = 123.0
-            await state._execute_run(record, packet, "test-key", Path(record.worktree))
+            await self._execute_run(state, record, packet, Path(record.worktree))
+
+    async def _execute_run(
+        self,
+        state: DaemonState,
+        record: RunRecord,
+        packet: TaskPacket,
+        worktree: Path,
+    ) -> None:
+        project_root = Path(record.project_root)
+        await state._execute_run(
+            record,
+            packet,
+            "test-key",
+            worktree,
+            project_root / ".git",
+            project_root / ".git" / "index",
+        )
 
     async def test_success_requires_all_artifacts_and_cleans_handles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -167,7 +184,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(state, "broadcast", broadcast),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
-                await state._execute_run(record, packet, "test-key", Path(record.worktree))
+                await self._execute_run(state, record, packet, Path(record.worktree))
 
             self.assertEqual(len(record.rss_samples), RSS_SAMPLE_LIMIT)
             self.assertEqual(
@@ -266,7 +283,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 patch("orchestrator.daemon.changed_files", return_value=[]),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
-                await state._execute_run(record, packet, "test-key", root / "worktree")
+                await self._execute_run(state, record, packet, root / "worktree")
 
             self.assertEqual(record.status, "incomplete")
             self.assertIn("diff.patch", record.error or "")
@@ -288,7 +305,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 patch("orchestrator.daemon.changed_files", return_value=[]),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
-                await state._execute_run(record, packet, "test-key", root / "worktree")
+                await self._execute_run(state, record, packet, root / "worktree")
 
             self.assertEqual(record.status, "incomplete")
             self.assertIn("last message", record.error or "")
@@ -315,7 +332,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
-                await state._execute_run(record, packet, "test-key", root / "worktree")
+                await self._execute_run(state, record, packet, root / "worktree")
 
             self.assertEqual(record.status, "incomplete")
             self.assertIn("files.json", record.error or "")
@@ -333,7 +350,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 patch("orchestrator.daemon.os.getpgid", side_effect=OSError("pgid unavailable")),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
-                await state._execute_run(record, packet, "test-key", root / "worktree")
+                await self._execute_run(state, record, packet, root / "worktree")
 
             self.assertEqual(record.status, "incomplete")
             self.assertIn("process-group identity", record.error or "")
@@ -622,7 +639,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(state._evidence[record.run_id], "event", side_effect=event),
             ):
                 process_probe.return_value.create_time.return_value = 123.0
-                await state._execute_run(record, packet, "test-key", root / "worktree")
+                await self._execute_run(state, record, packet, root / "worktree")
 
             self.assertEqual(record.status, "incomplete")
             self.assertEqual(record.stop_outcome, "lifecycle_survivor_alive")
@@ -674,7 +691,7 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ):
                 process_probe.return_value.create_time.return_value = 123.0
                 task = asyncio.create_task(
-                    state._execute_run(record, packet, "test-key", root / "worktree")
+                    self._execute_run(state, record, packet, root / "worktree")
                 )
                 await asyncio.sleep(0)
                 await state._record_incomplete(

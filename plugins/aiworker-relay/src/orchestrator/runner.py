@@ -24,7 +24,7 @@ class ProcessControlError(RuntimeError):
 def _tool_path_and_read_roots(
     project_root: Path, worktree: Path
 ) -> tuple[str, tuple[Path, ...]]:
-    """Keep installed tools reachable without making the host readable."""
+    """Keep installed tools reachable and list the roots they need to read."""
 
     candidates = os.environ.get("PATH", os.defpath).split(os.pathsep)
     if sys.platform == "darwin":

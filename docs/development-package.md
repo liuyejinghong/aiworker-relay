@@ -47,7 +47,7 @@ codex exec --json --ephemeral \
   <task-packet-prompt>
 ```
 
-隔离 `CODEX_HOME` 只包含此次 OpenRouter provider 与 `aiworker` permission profile 的配置。该 profile 不继承会放行系统临时目录的 `:workspace` 写边界，而是从默认拒绝开始，只读放行最小运行时、当前 PATH 所需工具链和 linked-worktree Git metadata，并只给 detached worktree 与 run-scoped 隔离 HOME 写权限。控制面从系统密钥服务短暂读取 key，并仅向 provider 子进程提供认证环境；worker 工具使用 `inherit=none` 的隔离 HOME / TMP / XDG，无法继承该 Key。项目 `.codex/config.toml` 按 untrusted 跳过，但 worktree 中的 `AGENTS.md` 仍作为项目事实加载。
+隔离 `CODEX_HOME` 只包含此次 OpenRouter provider 与 `aiworker` permission profile 的配置。该 profile 不继承 `:workspace`，而是从默认拒绝开始，只读放行 Codex 最小平台运行时、当前 PATH 所需工具链和 linked-worktree Git metadata，并放行 detached worktree 与 run-scoped 隔离 HOME 写入。控制面从系统密钥服务短暂读取 key，并仅向 provider 子进程提供认证环境；worker 工具使用 `inherit=none` 的隔离 HOME / TMP / XDG，无法继承该 Key。项目 `.codex/config.toml` 按 untrusted 跳过，但 worktree 中的 `AGENTS.md` 仍作为项目事实加载。当前 macOS Codex 普通 shell 仍可读写 host `/tmp` 与 `/var/tmp`；这条已知边界不被文档包装成完整 host isolation。
 
 ## Task Packet 与 Run Evidence
 

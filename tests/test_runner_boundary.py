@@ -138,6 +138,7 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(policy["ignore_default_excludes"])
         self.assertFalse(policy["experimental_use_profile"])
         self.assertEqual(policy["set"]["HOME"], str(isolated_home))
+        self.assertNotIn("UNRELATED_SERVICE_TOKEN", policy["set"])
         self.assertEqual(policy["filters"]["OPENROUTER_API_KEY"], "exclude")
         self.assertEqual(
             config["model_providers"]["openrouter"]["env_key"],
