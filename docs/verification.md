@@ -112,7 +112,7 @@ v0.1.19 另修正同 version / 不同 source 仍被判为 `up_to_date` 的更新
 | artifact 与 lock 身份 | 通过 | 三个 runtime 的 source fingerprint 均为 `sha256:1acdaffa2c68a43379192a08b0bb19e776dd22d5850b641c09c6fda426bfb20b`；3.12 / 3.13 / 3.14 lock 分别为 `sha256:b7978e2fb57e321ccca33795c9336098ebb7f7b05304b2bf38edcb0f2260eb50`、`sha256:5ab62f7da1bd085b5a6f3f4d004c805ca756cb08e2c648b049e7e593737efd5e`、`sha256:64457894b232e0b6e0928cf027fcc3eb9b76e70e0a0286ac253328633c9b7ebf`。schema 2 marker 同时记录精确 Python 版本和完整 resolved package set。 |
 | fail-closed 安装合同 | 通过 | runtime lock 使用精确版本与 SHA256；安装命令固定 `--isolated`、官方 index、`--require-hashes`、`--only-binary=:all:`、`--no-deps`、`--no-cache-dir`。Plugin source 随后使用固定 build backend、`--no-build-isolation`、`--no-deps`、`--no-cache-dir` 安装；环境中的 `PIP_*` 覆盖不会参与该流程。 |
 | 完整回归 | 通过 | 使用最终 3.14 临时安装态执行 `unittest discover -s tests -v`，132 项全部通过；包括 schema 2 identity、lock 完整性、free-threaded Python 拒绝、安装命令、runtime 替换/回滚、daemon 和既有 external-run 边界。前端 JavaScript 语法检查与 `git diff --check` 同时通过。 |
-| Intel artifact 覆盖 | 待 CI 真实安装 | lock 已从官方 PyPI artifact metadata 纳入 arm64、x86_64 和 universal2 wheel 哈希，但本机只有 arm64，不能把 cross-target 下载检查称为 Intel 安装成功。PR CI 将以 GitHub `macos-15-intel` 对 3.12 / 3.13 / 3.14 运行同一 production installer；该矩阵全绿后才接受 Intel 路径。 |
+| 六路架构矩阵 | 通过 | PR #38 的 GitHub Actions run `33154125046` 在 `macos-14` arm64 与 `macos-15-intel` 上，分别以 Python 3.12、3.13、3.14 执行同一 production installer fresh install、identity readback 和 132 项完整测试，六个 job 全部通过。该证据同时验收 lock 中的 arm64、x86_64 / universal2 artifact 路径。 |
 
 ## 已验证结论
 
