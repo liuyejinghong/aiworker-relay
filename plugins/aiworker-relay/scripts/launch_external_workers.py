@@ -7,11 +7,14 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import plistlib
+import re
 import shutil
 import socket
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import urllib.error
@@ -28,6 +31,9 @@ PERSISTENT_CONTROL_PORT = 49178
 LAUNCH_AGENT_LABEL = "com.aiworker.relay"
 CAPABILITY_HEADER = "X-AIworker-Capability"
 RUNTIME_IDENTITY_FILE = ".aiworker-release.json"
+PYPI_INDEX_URL = "https://pypi.org/simple"
+SUPPORTED_RUNTIME_MINORS = {(3, 12), (3, 13), (3, 14)}
+SUPPORTED_MACOS_ARCHITECTURES = {"arm64", "x86_64"}
 GENERATED_SOURCE_DIRECTORIES = {
     "__pycache__",
     ".mypy_cache",
@@ -190,9 +196,70 @@ def _valid_source_fingerprint(value: object) -> bool:
     )
 
 
-def installed_runtime_fingerprint(runtime: Path, *, version: str | None) -> str | None:
-    """Read the bundle identity accepted when this runtime was installed."""
+def runtime_lock_path() -> Path:
+    """Return the accepted lock for this supported setup target."""
 
+    if sys.platform != "darwin":
+        raise RuntimeUpdateError(
+            "AIworker Relay v0.1.x setup supports macOS only"
+        )
+    if platform.python_implementation() != "CPython" or sysconfig.get_config_var(
+        "Py_GIL_DISABLED"
+    ):
+        raise RuntimeUpdateError(
+            "AIworker Relay v0.1.x setup requires a standard CPython build"
+        )
+    architecture = platform.machine().lower()
+    if architecture not in SUPPORTED_MACOS_ARCHITECTURES:
+        raise RuntimeUpdateError(
+            "AIworker Relay v0.1.x setup supports macOS arm64 or x86_64 only"
+        )
+    python_minor = sys.version_info[:2]
+    if python_minor not in SUPPORTED_RUNTIME_MINORS:
+        raise RuntimeUpdateError(
+            "AIworker Relay v0.1.x setup requires Python 3.12, 3.13, or 3.14"
+        )
+    path = SOURCE_ROOT / "locks" / (
+        f"runtime-macos-py{python_minor[0]}.{python_minor[1]}.txt"
+    )
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeUpdateError(f"runtime dependency lock is unavailable: {path.name}")
+    return path
+
+
+def runtime_lock_fingerprint(path: Path) -> str:
+    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def locked_packages(path: Path) -> dict[str, str]:
+    """Read the exact package versions from the repository-owned lock."""
+
+    packages: dict[str, str] = {}
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        requirement, separator, remainder = line.partition("==")
+        version = remainder.split(maxsplit=1)[0] if separator else ""
+        name = re.sub(r"[-_.]+", "-", requirement.strip().lower())
+        if (
+            not name
+            or not version
+            or "--hash=sha256:" not in line
+            or name in packages
+        ):
+            raise RuntimeUpdateError(
+                f"runtime dependency lock is invalid at {path.name}:{line_number}"
+            )
+        packages[name] = version
+    if not packages:
+        raise RuntimeUpdateError(f"runtime dependency lock is empty: {path.name}")
+    return packages
+
+
+def _read_runtime_identity(runtime: Path, *, version: str | None) -> dict[str, Any] | None:
     if version is None:
         return None
     try:
@@ -203,21 +270,58 @@ def installed_runtime_fingerprint(runtime: Path, *, version: str | None) -> str 
         return None
     if (
         not isinstance(value, dict)
-        or value.get("schema_version") != 1
+        or value.get("schema_version") not in {1, 2}
         or value.get("version") != version
         or not _valid_source_fingerprint(value.get("source_fingerprint"))
     ):
         return None
-    return str(value["source_fingerprint"])
+    if value["schema_version"] == 2:
+        packages = value.get("packages")
+        if (
+            not isinstance(value.get("dependency_lock"), str)
+            or not value["dependency_lock"]
+            or not _valid_source_fingerprint(value.get("dependency_lock_sha256"))
+            or not isinstance(value.get("python_version"), str)
+            or not value["python_version"]
+            or not isinstance(packages, list)
+            or any(
+                not isinstance(package, dict)
+                or not isinstance(package.get("name"), str)
+                or not package["name"]
+                or not isinstance(package.get("version"), str)
+                or not package["version"]
+                for package in packages
+            )
+        ):
+            return None
+    return value
+
+
+def installed_runtime_fingerprint(runtime: Path, *, version: str | None) -> str | None:
+    """Read the bundle identity accepted when this runtime was installed."""
+
+    value = _read_runtime_identity(runtime, version=version)
+    return str(value["source_fingerprint"]) if value is not None else None
 
 
 def _write_runtime_identity(
-    runtime: Path, *, version: str, source_fingerprint: str
+    runtime: Path,
+    *,
+    version: str,
+    source_fingerprint: str,
+    dependency_lock: str,
+    dependency_lock_sha256: str,
+    python_version: str,
+    packages: list[dict[str, str]],
 ) -> None:
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "version": version,
         "source_fingerprint": source_fingerprint,
+        "dependency_lock": dependency_lock,
+        "dependency_lock_sha256": dependency_lock_sha256,
+        "python_version": python_version,
+        "packages": packages,
     }
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -230,6 +334,63 @@ def _write_runtime_identity(
         temporary.write("\n")
         temporary_path = Path(temporary.name)
     temporary_path.replace(runtime / RUNTIME_IDENTITY_FILE)
+
+
+def _pip_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    for key in tuple(environment):
+        if key.upper().startswith("PIP_"):
+            environment.pop(key)
+    return environment
+
+
+def _pip_failure(phase: str, result: subprocess.CompletedProcess[str]) -> RuntimeUpdateError:
+    output = (result.stderr or result.stdout or "").strip()
+    detail = output.splitlines()[-1][:500] if output else "no diagnostic output"
+    return RuntimeUpdateError(
+        f"{phase} failed (pip exit {result.returncode}): {detail}"
+    )
+
+
+def _installed_packages(python: Path) -> list[dict[str, str]]:
+    result = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "--isolated",
+            "list",
+            "--format=json",
+            "--disable-pip-version-check",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_pip_environment(),
+    )
+    if result.returncode:
+        raise _pip_failure("installed package readback", result)
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeUpdateError("installed package readback returned invalid JSON") from exc
+    if not isinstance(value, list):
+        raise RuntimeUpdateError("installed package readback returned invalid data")
+    packages: list[dict[str, str]] = []
+    for package in value:
+        if (
+            not isinstance(package, dict)
+            or not isinstance(package.get("name"), str)
+            or not isinstance(package.get("version"), str)
+        ):
+            raise RuntimeUpdateError("installed package readback returned invalid data")
+        packages.append(
+            {
+                "name": re.sub(r"[-_.]+", "-", package["name"].lower()),
+                "version": package["version"],
+            }
+        )
+    return sorted(packages, key=lambda package: package["name"])
 
 
 def installed_runtime_version(orch: Path) -> str | None:
@@ -581,18 +742,88 @@ def restore_interrupted_runtime(
 def _install_runtime_at(
     runtime: Path, *, expected_version: str, expected_source_fingerprint: str
 ) -> Path:
+    lock_path = runtime_lock_path()
+    lock_fingerprint = runtime_lock_fingerprint(lock_path)
+    expected_packages = locked_packages(lock_path)
+    expected_packages["codex-orchestrator"] = expected_version
     runtime.parent.mkdir(parents=True, exist_ok=True)
     venv.EnvBuilder(with_pip=True).create(str(runtime))
     python = venv_python(runtime)
-    install = subprocess.run(
-        [str(python), "-m", "pip", "install", "--upgrade", str(SOURCE_ROOT)],
+    environment = _pip_environment()
+    dependency_install = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "--isolated",
+            "install",
+            "--disable-pip-version-check",
+            "--index-url",
+            PYPI_INDEX_URL,
+            "--only-binary",
+            ":all:",
+            "--require-hashes",
+            "--no-deps",
+            "--no-cache-dir",
+            "--requirement",
+            str(lock_path),
+        ],
         check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        env=environment,
     )
-    if install.returncode:
+    if dependency_install.returncode:
+        raise _pip_failure("locked runtime dependency install", dependency_install)
+    source_install = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "--isolated",
+            "install",
+            "--disable-pip-version-check",
+            "--no-deps",
+            "--no-build-isolation",
+            "--no-cache-dir",
+            str(SOURCE_ROOT),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    if source_install.returncode:
+        raise _pip_failure("Plugin source install", source_install)
+    dependency_check = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "--isolated",
+            "check",
+            "--disable-pip-version-check",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    if dependency_check.returncode:
+        raise _pip_failure("installed dependency check", dependency_check)
+    packages = _installed_packages(python)
+    actual_packages = {package["name"]: package["version"] for package in packages}
+    if actual_packages != expected_packages:
+        missing = sorted(set(expected_packages) - set(actual_packages))
+        unexpected = sorted(set(actual_packages) - set(expected_packages))
+        mismatched = sorted(
+            name
+            for name in set(actual_packages) & set(expected_packages)
+            if actual_packages[name] != expected_packages[name]
+        )
         raise RuntimeUpdateError(
-            "could not install local runtime dependencies; check your network and retry setup"
+            "installed package set does not match the accepted runtime lock "
+            f"(missing={missing}, unexpected={unexpected}, mismatched={mismatched})"
         )
     orch = venv_orch(runtime)
     actual_version = installed_runtime_version(orch)
@@ -605,6 +836,10 @@ def _install_runtime_at(
         runtime,
         version=expected_version,
         source_fingerprint=expected_source_fingerprint,
+        dependency_lock=lock_path.stem,
+        dependency_lock_sha256=lock_fingerprint,
+        python_version=platform.python_version(),
+        packages=packages,
     )
     return orch
 
@@ -621,6 +856,9 @@ def runtime_status() -> dict[str, object]:
         installed_runtime_fingerprint(runtime, version=actual_version)
         if ready
         else None
+    )
+    runtime_identity = (
+        _read_runtime_identity(runtime, version=actual_version) if ready else None
     )
     daemon = daemon_snapshot(root)
     if not ready:
@@ -661,7 +899,13 @@ def runtime_status() -> dict[str, object]:
         else:
             update_status = "update_required"
     return {
-        "python_supported": sys.version_info >= (3, 12),
+        "python_supported": (
+            sys.platform == "darwin"
+            and platform.python_implementation() == "CPython"
+            and not sysconfig.get_config_var("Py_GIL_DISABLED")
+            and platform.machine().lower() in SUPPORTED_MACOS_ARCHITECTURES
+            and sys.version_info[:2] in SUPPORTED_RUNTIME_MINORS
+        ),
         "python_version": ".".join(map(str, sys.version_info[:3])),
         "runtime_root": str(runtime),
         "runtime_ready": ready,
@@ -669,6 +913,20 @@ def runtime_status() -> dict[str, object]:
         "bundle_source_fingerprint": expected_fingerprint,
         "runtime_version": actual_version,
         "runtime_source_fingerprint": actual_fingerprint,
+        "runtime_dependency_lock": (
+            runtime_identity.get("dependency_lock") if runtime_identity else None
+        ),
+        "runtime_dependency_lock_sha256": (
+            runtime_identity.get("dependency_lock_sha256")
+            if runtime_identity
+            else None
+        ),
+        "runtime_python_version": (
+            runtime_identity.get("python_version") if runtime_identity else None
+        ),
+        "runtime_packages": (
+            runtime_identity.get("packages") if runtime_identity else None
+        ),
         "daemon_version": daemon.version,
         "daemon_source_fingerprint": daemon.source_fingerprint,
         "daemon_state": daemon.state,

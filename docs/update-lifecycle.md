@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.19 为当前源码候选；v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 把 source fingerprint 纳入 bundle/runtime/daemon 收敛，但尚未安装、打 tag 或发布。v0.1.17 在 Provider 前暴露的 strict-config project-trust override 缺陷已由 v0.1.18 安装态 run `b221a85785fd4cf6b618f07ca416068d` 闭环。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
+状态：v0.1.19 为当前源码候选；v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 把 source fingerprint 纳入 bundle/runtime/daemon 收敛，并为 macOS arm64/x86_64、标准 CPython 3.12/3.13/3.14 固定 hash-checked build/runtime set，但尚未安装、打 tag 或发布。v0.1.17 在 Provider 前暴露的 strict-config project-trust override 缺陷已由 v0.1.18 安装态 run `b221a85785fd4cf6b618f07ca416068d` 闭环。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
 
 ## 为什么需要这一项
 
@@ -39,6 +39,7 @@ AIworker Relay 有两个独立但必须保持一致的交付物：
 | daemon version | `/api/health` 与 `/api/overview` | 确认正在服务看板的代码版本 |
 | bundle source fingerprint | launcher 对唯一 Plugin source 的实际分发文件计算 | 检测同 version / 不同 source；与稳定 release 的 Git SHA 证据绑定 |
 | runtime source fingerprint | venv 根目录的 `.aiworker-release.json` | 记录该 runtime 实际从哪个 bundle 内容安装 |
+| runtime dependency identity | 同一 `.aiworker-release.json` 中的 lock 名称、lock SHA-256、Python 版本与 package set | 证明本次 setup 实际接受的完整构建与运行依赖集合 |
 | daemon source fingerprint | `daemon.json`、`/api/health` 与 `/api/overview` | 确认当前进程与 installed runtime 身份一致 |
 | profile schema version | `profiles.json` 内的版本字段，当前为 `1` | 仅在持久化 Profile 格式改变时决定是否迁移 |
 
@@ -98,13 +99,19 @@ Python venv 内的入口脚本通常包含绝对路径，不能把一个已验�
 1. launcher 从新 bundle 读取 package `VERSION` 并计算 source fingerprint，从现有 `orch version` 与 venv release identity 读取现状；不依赖全局 Python 依赖。
 2. 若有 daemon，先以 `daemon.json`、`/api/health` 和 `/api/overview` 交叉确认它就是本产品的 daemon，且没有活跃 external run。
 3. 只在该判定成立时，使用记录中的 capability 请求 idle daemon 正常退出；不再为缺少该控制动作的旧 daemon 直接发送信号。macOS 的 LaunchAgent 将受控退出视为一次正常退出，直到新 runtime 就绪后才重新启动同一 daemon；旧记录没有 capability 时保持 unknown 并阻塞更新。
-4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv` 并从当前 Plugin bundle 安装 runtime；安装和版本检查通过后写入 version-bound source fingerprint，失败时立即恢复旧 runtime，成功后仍保留该 marker。若此前已停止 verified-idle daemon，也要用恢复后的旧 runtime 重启并校验持久控制面。
+4. 将旧 `venv` 暂存为唯一的 `venv.previous`，在原路径创建新的 `venv`。launcher 按当前 Python minor 选择随 bundle 分发的 lock，只从显式官方 PyPI index 安装带 SHA-256 的 accepted wheels；venv seed pip 只负责把 pip、setuptools、直接与传递依赖收敛到精确集合。随后以固定 setuptools 和 `--no-build-isolation --no-deps` 安装当前 Plugin source；`pip check`、完整 package-set readback 和版本检查通过后，写入 version-bound source/dependency identity。任一步失败都立即恢复旧 runtime，成功后仍保留 marker。若此前已停止 verified-idle daemon，也要用恢复后的旧 runtime 重启并校验持久控制面。
 5. 由持久 entry、daemon 启动和权威最终校验共同接受 candidate。最终校验必须确认预期 bundle version、source fingerprint、固定 `127.0.0.1:49178` endpoint、`persistent`、以及当前项目 `project_root`；全部通过后才删除 `venv.previous`。
 6. 任一 post-install 步骤失败时，只有已验证 idle 的 daemon 才能通过 capability-gated shutdown 停止；随后恢复旧 runtime、用旧 runtime 重启持久控制面并校验旧 version、endpoint、persistent 和 `project_root`。若 daemon active 或 unknown，则不停止、不删除任一目录，明确报告 deferred / blocked。
 
 如果进程在第 4 至第 5 步之间被中断，下一次 setup 按 `venv.previous` marker 做确定性恢复：只有 `venv.previous` 时直接恢复；两目录中 candidate 已完整接受且 idle 时提交删除 marker，active 时延后清理；未接受的 candidate 在 active 时延后、unknown 时阻塞、idle 时受控停止后恢复旧 runtime，missing/stale 时直接恢复。该临时备份只解决一次更新事务的失败恢复，不形成长期多版本管理系统。
 
 为在 macOS、Windows 与 Linux 上一致地替换 idle daemon，当前 runtime 提供一个仅供 launcher 使用的窄本地“正常退出”控制动作。它不是通用管理 API，也不作用于活跃 run。launcher 只对 capability 与 health/overview 身份均匹配的 idle daemon 调用该动作；控制动作缺失、认证失败或身份不完整都会保持更新阻塞，不会退回到直接处理 PID。macOS 仅在同一次 setup 已完成该受控 idle shutdown 时，才允许卸载随后处于 loaded 但无 daemon record 的 owned LaunchAgent；其他 missing/stale record 与 loaded entry 组合一律视为未知并阻塞，不猜测 active run 状态。
+
+## 依赖更新与安全修复
+
+依赖不会在用户 setup 时自动漂移，也不由后台任务静默升级。上游安全公告、兼容性缺陷或明确的维护需要只会触发一个普通受审查源码变更：同一 PR 必须同步更新 `pyproject.toml` 的直接/build pin、三个 Python-minor lock 的完整传递集合与官方 PyPI wheel hashes，并说明被替换版本的原因。不能只改范围或只补一个平台文件。
+
+该 PR 先通过受支持的六个 Python/架构组合 fresh install、package-set readback 与完整测试，再接受独立 exact-head review。通过后仍只是新的 source candidate；更新 stable SHA、tag 或 Release 是另外的发布动作。若新依赖集合在 setup 或后续权威校验中失败，既有 `venv.previous` 事务恢复上一 runtime，用户 Profile、Keychain 与 `.orch/` 不参与依赖回滚。这里不增加自动漏洞扫描服务、远程 installer 或第二个 package manager；发现具体公告时再以其实际受影响范围决定优先级和版本变更。
 
 ## 持久数据与迁移
 
@@ -147,8 +154,8 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 | 所有权 | 最小变更 |
 | --- | --- |
 | `plugins/aiworker-relay/src/orchestrator/VERSION`、`pyproject.toml`、`src/orchestrator/__init__.py`、`.codex-plugin/plugin.json` | 建立一份 canonical release version，并在构建/测试时验证 manifest 与 runtime 一致。 |
-| `scripts/launch_external_workers.py` | 读取 bundle/runtime 版本；setup 执行更新判定、活跃 run 保护和有界恢复。dispatch 在 mismatch 时明确拒绝并引导 setup。 |
-| `src/orchestrator/cli.py`、`daemon.py` | 提供仅用于替换 idle daemon 的窄内部控制路径，并报告 daemon version。 |
+| `scripts/launch_external_workers.py`、`locks/` | 读取 bundle/runtime 版本；按受支持 target 安装 hash-locked build/runtime set；回读 package set；执行更新判定、活跃 run 保护和有界恢复。dispatch 在 mismatch 时明确拒绝并引导 setup。 |
+| `src/orchestrator/cli.py`、`daemon.py` | 提供仅用于替换 idle daemon 的窄内部控制路径，并报告 daemon version、source fingerprint 与 dependency identity。 |
 | `src/orchestrator/config.py` | 只增加本次 venv 恢复所需的路径与原子记录；不改变 Profile 格式。 |
 | `tests/` | 覆盖版本不一致、active defer、idle replace、失败恢复与数据不变。 |
 | `docs/` | 更新用户流程、发布说明与故障处理口径。 |
@@ -184,6 +191,7 @@ Git marketplace 的安装/更新验收必须真实操作一次 Codex Desktop：�
 4. 更新失败后上一 runtime 可重新 setup，Profile 与 Key 不丢失；
 5. 用户只需使用 Codex 的 Plugin 安装面和已有 `$aiworker-relay setup`，不需要 pip、手动 venv 操作或复制 Key；
 6. 对实际 Codex marketplace 更新行为有一次端到端观察记录，而非依据 CLI 名称推断；当前已具备 CLI 观察记录，Desktop 特有交互另行记录。
+7. 同一受审查 bundle 在 macOS arm64/x86_64 的 Python 3.12、3.13、3.14 上只接受 lock 中的 wheel hashes；fresh install 的 identity 回读 lock、Python 与完整 package set，依赖更新必须形成新的受审查源码 diff。
 
 ## 仍需用户确认的产品选择
 

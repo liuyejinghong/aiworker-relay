@@ -627,3 +627,23 @@ The launcher computes one deterministic `sha256` fingerprint over all distribute
 `setup` and `dispatch` require version and fingerprint agreement across bundle, installed runtime and daemon. Same-version/different-source and a legacy runtime with no identity both require setup; an active run still defers replacement. A failed candidate may restore a legacy known-good runtime without fabricating a fingerprint, but that runtime remains update-required on the next normal check.
 
 This fingerprint is the local content identity used by the stable release boundary, not a substitute for Git provenance. A future stable catalog must select an exact reviewed Git SHA (the official marketplace format permits a `sha` selector), and release evidence must record that SHA together with the resulting Plugin fingerprint and accepted dependency set. No tag, stable channel, branch protection or GitHub Release is created by this decision alone.
+
+## D040 — Lock the supported macOS runtime and build environment
+
+Status: Accepted
+
+Reason:
+
+An exact reviewed Plugin source did not determine the runtime installed by setup: ranged build and runtime requirements allowed pip to select newer compatible artifacts on a later date. Stable provenance therefore requires an accepted package set in addition to the source SHA and Plugin fingerprint.
+
+Alternatives considered:
+
+An experimental cross-platform `pylock.toml`, ranged constraints without hashes, vendored wheels, a second package manager, and a remote installer were not accepted. One lock for every Python/platform combination was also unnecessary because the resolved versions are identical across the accepted matrix and only compiled wheel hashes differ by Python minor and macOS architecture.
+
+Consequences:
+
+The v0.1.x setup matrix is macOS arm64/x86_64 with standard CPython 3.12, 3.13, or 3.14. Free-threaded and non-CPython builds fail closed until they have their own wheel and runtime evidence. The Plugin carries one requirements lock per Python minor; each lock names the complete exact package set and the accepted architecture-specific and universal2 wheel SHA-256 values. Setup supplies `https://pypi.org/simple` explicitly, accepts wheels only, disables dependency resolution, and requires hashes. The venv-seeded pip is used only to install that accepted set, which itself replaces pip and installs the exact setuptools build backend. The Plugin source is then installed with the fixed backend using `--no-build-isolation --no-deps`.
+
+Before a candidate can replace the last known-good runtime, setup runs `pip check` and compares the complete installed distribution set with the lock plus the Plugin distribution. The version-bound release identity records the Plugin source fingerprint, selected lock and lock SHA-256, exact Python version, and complete resolved package list. Dependency changes therefore require a reviewed lock/source change and reuse the existing runtime rollback transaction without touching user Profiles, Keychain values, or project `.orch/` data.
+
+CI performs a cache-miss network install through the production installer path for every accepted Python minor on GitHub's standard arm64 macOS runner and Intel macOS runner. The release does not claim offline availability: an unavailable or changed index artifact fails closed with the pip phase and final diagnostic line, while the previous runtime remains recoverable.
