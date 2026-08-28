@@ -10,7 +10,7 @@
         "source": "git-subdir",
         "url": "https://github.com/liuyejinghong/aiworker-relay.git",
         "path": "./plugins/aiworker-relay",
-        "ref": "main"
+        "sha": "89d8d564c80cd4de59d7908a6a7114f4c2d03f54"
       },
       "policy": {
         "installation": "AVAILABLE",

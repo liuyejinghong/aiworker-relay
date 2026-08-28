@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1.19 为当前源码候选，v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 增加 version + source fingerprint 的 runtime 收敛，但尚未安装或发布。固定持久本机看板、supervisor、派发、终态 run 数据删除、bounded RSS 与显式 permission profile 已实现。LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`，普通用户环境不受改写；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
+状态：v0.1.19 为当前 release candidate，Git-backed catalog 候选把 Plugin source 固定到 reviewed commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`，并通过隔离 Codex CLI 安装；GitHub ruleset `21734294` 已对 `main` active 生效。尚未完成真实 Desktop/runtime、tag 或 Release。v0.1.18 仍是真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。固定持久本机看板、supervisor、派发、终态 run 数据删除、bounded RSS 与显式 permission profile 已实现；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 
@@ -12,14 +12,14 @@
 
 用户安装 AIworker Relay Plugin。Codex 识别其中的 `aiworker-relay` Skill；安装本身不改写主 Codex 的模型、provider、原生 worker、系统提示、hooks 或项目 `AGENTS.md`。
 
-公开 pre-release 使用 Git-backed marketplace。正常开发者的安装命令是：
+公开 release catalog 使用 Git-backed marketplace。`--ref main` 只选择受保护的 catalog branch；catalog 内的 Plugin entry 另行固定到已审查的 exact source SHA。正常开发者的安装命令是：
 
 ```bash
 codex plugin marketplace add liuyejinghong/aiworker-relay --ref main --sparse .agents/plugins
 codex plugin add aiworker-relay@aiworker-relay
 ```
 
-更新 marketplace snapshot 时使用 `codex plugin marketplace upgrade aiworker-relay`。该 CLI 流程已在干净隔离环境实测；已安装 Plugin 在 Codex Desktop 中如何呈现新 bundle，仍应按实际 UI 观察说明。用户不需要先安装独立 Web 产品，也不需要学习一组常用的派发命令。
+更新 marketplace snapshot 时使用 `codex plugin marketplace upgrade aiworker-relay`。该命令刷新 catalog，不等于静默替换 Desktop 已安装的版本化缓存副本；用户仍需在 Plugin 安装面接受 catalog 暴露的新 exact-SHA bundle。当前 CLI 流程已有历史实测，v0.1.19 immutable candidate 与 Desktop 的具体更新交互仍以本轮真实观察为准。用户不需要先安装独立 Web 产品，也不需要学习一组常用的派发命令。
 
 ### 2. 在新 task 中完成 setup
 

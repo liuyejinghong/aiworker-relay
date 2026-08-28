@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.19 为当前源码候选，v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在既有固定持久控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile 上，增加 bundle/runtime/daemon 的确定性 source fingerprint 收敛，以及 macOS arm64/x86_64、Python 3.12/3.13/3.14 的 hash-checked runtime locks；它尚未安装、打 tag 或发布。v0.1.17 的首次 NVIDIA run 在 Provider 前因 Codex 0.149 strict-config 不接受动态 project-trust CLI override 而失败，没有写文件或自动重试；v0.1.18 修正后，run `b221a85785fd4cf6b618f07ca416068d` 已在 detached worktree 创建唯一 34-byte marker，diff/files 完整回读，并由受管 TERM 收敛为 `term_exited`、退出码 0。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
+状态：v0.1.19 为当前源码候选，精确 source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；v0.1.18 仍是本机真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在既有固定持久控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile 上，增加 bundle/runtime/daemon 的确定性 source fingerprint 收敛，以及 macOS arm64/x86_64、Python 3.12/3.13/3.14 的 hash-checked runtime locks。release-catalog 候选已把 Git-backed Plugin source 固定到该 SHA，并通过隔离 Codex CLI 安装；GitHub ruleset `21734294` 已对 `main` active 生效。尚未完成真实 Desktop/runtime、tag 或 Release。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
 
 ## 核心原则
 
@@ -12,7 +12,7 @@
 
 正式分发单元是 **AIworker Relay** Codex Plugin，核心入口是 `aiworker-relay` Skill。Plugin 解决“如何把这项能力交给 Codex”；Skill 解决“Codex 何时可使用这项能力”；本地控制面解决“如何配置与监管外部资源”。它们不是三套平行产品。
 
-仓库根目录的 `.agents/plugins/marketplace.json` 是公开 Git marketplace catalog，并以 `git-subdir` 指向同一仓库内的 `./plugins/aiworker-relay`。该目录是唯一可安装的 Plugin source，内含 `.codex-plugin/plugin.json`、Skill、launcher、`pyproject.toml` 与 Python runtime；仓库根目录保留产品文档、图与开发测试材料。它不是第二份 runtime，也不依赖仓库外的全局 Python 包。local marketplace 只保留给源码开发，不作为面向普通开发者的发布说明。
+仓库根目录的 `.agents/plugins/marketplace.json` 是公开 Git marketplace catalog，并以 `git-subdir` + exact `sha` 指向同一仓库内已经通过审查与 CI 的 `./plugins/aiworker-relay`。该目录是唯一可安装的 Plugin source，内含 `.codex-plugin/plugin.json`、Skill、launcher、`pyproject.toml` 与 Python runtime；仓库根目录保留 catalog、产品文档、图与开发测试材料。Plugin 源码先形成不可变 commit，catalog 再由单独 PR 前移 selector，因此 catalog 自身可演进而某次发布的 Plugin bytes 不会随 `main` 漂移。local marketplace 只保留给源码开发。
 
 setup 对该唯一 Plugin source 的全部分发文件计算一个确定性 `sha256` fingerprint；Python bytecode、build 目录和 egg metadata 等 setup 可再生文件不参与。launcher 将 version 与 fingerprint 一起写入新 venv 的 release identity，daemon record、health 与 overview 回读同一身份。同 version 但 fingerprint 不同、身份缺失或三者不一致都要求重新 setup；活跃 run 仍只延后更新而不会被停止。fingerprint 用于本机内容收敛，稳定发布仍必须另外用受控 Git source SHA 证明这些 bytes 来自哪个已审查 commit。三个随 Plugin 分发的 requirements lock 分别固定 Python 3.12、3.13、3.14 在 macOS arm64/x86_64 上的完整 wheel、pip 与 setuptools 版本和 SHA-256；安装成功后 release identity 还记录 lock 名称、lock 摘要、精确 Python 版本和完整已安装包集合。
 

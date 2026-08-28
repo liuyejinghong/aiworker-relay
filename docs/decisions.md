@@ -647,3 +647,21 @@ The v0.1.x setup matrix is macOS arm64/x86_64 with standard CPython 3.12, 3.13, 
 Before a candidate can replace the last known-good runtime, setup runs `pip check` and compares the complete installed distribution set with the lock plus the Plugin distribution. The version-bound release identity records the Plugin source fingerprint, selected lock and lock SHA-256, exact Python version, and complete resolved package list. Dependency changes therefore require a reviewed lock/source change and reuse the existing runtime rollback transaction without touching user Profiles, Keychain values, or project `.orch/` data.
 
 CI performs a cache-miss network install through the production installer path for every accepted Python minor on GitHub's standard arm64 macOS runner and Intel macOS runner. The release does not claim offline availability: an unavailable or changed index artifact fails closed with the pip phase and final diagnostic line, while the previous runtime remains recoverable.
+
+## D041 — Advance releases through an exact-SHA catalog PR
+
+Status: Accepted
+
+Reason:
+
+A marketplace entry that selects `ref: main` makes a previously reviewed version resolve to different Plugin bytes after an unrelated source merge. The catalog must be able to move to a new release while each selected Plugin source remains immutable and auditable.
+
+Alternatives considered:
+
+Keeping mutable `main`, embedding a commit's own SHA inside that same commit, creating a second marketplace repository, or treating a movable tag as sufficient provenance were not accepted. A separate repository or permanent channel tree adds ownership and synchronization without a current need; self-reference is impossible; an unprotected tag only moves the mutability problem.
+
+Consequences:
+
+`main` is the single release-producing catalog branch. Plugin changes merge first and produce an immutable reviewed source commit. A later catalog-only PR may replace `.agents/plugins/marketplace.json`'s `sha` selector with that commit only when the selected `plugins/aiworker-relay` tree is identical to the current candidate, canonical versions agree, and the full supported CI matrix passes. Ordinary source merges do not change what new marketplace installs receive.
+
+Before the first catalog PR is accepted, an active GitHub ruleset must require pull requests, strict success of all six arm64/Intel Python checks, and block deletion and force-push on `main`. This solo repository does not add an approval count the owner cannot satisfy and does not keep a direct-push bypass. Exact-SHA CLI installation and the actual Codex Desktop install/update interaction remain release evidence, not assumptions. Tags and GitHub Releases are optional external publication records and require separate authorization; they do not replace the catalog SHA or ruleset.
