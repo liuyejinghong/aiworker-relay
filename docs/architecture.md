@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.17 为当前 pre-release 源码候选，已实现固定持久本机控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile。Git-backed Marketplace 的历史干净安装/更新和 v0.1.16 bundle/runtime/daemon 收敛均已实测；v0.1.17 的安装态 Provider 回读仍待执行。LaunchAgent 只带解析 setup 时确定的 Codex CLI 及 Node runtime 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。非交互式 `codex exec` 使用 `--approve-for-me` 与高优先级 permission profile，不再依赖可被项目配置削弱的默认 workspace-write 配置。无 Provider 哨兵已确认 source checkout、普通真实 HOME 路径和工具网络被拒绝，但当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。Profile 的 `verified` 晋级规则仍是独立待决产品问题，不能因一次窄验收被静默改写。
+状态：v0.1.18 为当前 pre-release 源码候选，已实现固定持久本机控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile。v0.1.17 已完成本机安装态收敛，但首次 NVIDIA run 在 Provider 前因 Codex 0.149 的 strict-config 动态 project-trust override 不兼容而失败；没有写文件或自动重试。v0.1.18 将 trust entry 写入隔离 run config，并收窄两个自定义 PATH 边界；安装态 Provider 回读仍待执行。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。无 Provider 哨兵已确认 source checkout、普通真实 HOME 路径和工具网络被拒绝，但当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。Profile 的 `verified` 晋级规则仍是独立待决产品问题。
 
 ## 核心原则
 
@@ -155,7 +155,7 @@ external run
 
 profile 与 run 必须分开。冻结 profile 只阻止新的 run；停止正在运行的 task 使用独立的终止流程。
 
-首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录。runner 生成独立 `CODEX_HOME` 与不继承 `:workspace` 的 run-scoped `aiworker` permission profile：文件系统默认拒绝，只读放行 Codex 最小平台运行时、当前 PATH 所需工具链和 linked-worktree Git metadata，并放行 detached worktree 与隔离 HOME 写入；source checkout index 和 worktree `.env*` 显式拒绝，普通真实 HOME 与 source checkout 路径的真实哨兵也被 OS sandbox 拒绝。工具网络和 login shell 关闭，工具环境不继承宿主变量。项目配置层被标记为 untrusted；安全字段与用户已选 reasoning 仍由 CLI 最高优先级固定。当前 macOS Codex 会额外给普通 shell 放行 host `/tmp` 与 `/var/tmp`，因此这里不承诺完整 host 隔离。非交互式审批只使用 `--approve-for-me`，不再同时传旧 `--sandbox`，也不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。
+首发 write run 只有一条隔离路径：从当前项目 `HEAD` 创建 detached Git worktree，写入 `.orch/worktrees/<run-id>`，再以该 worktree 为 `codex exec --cd` 工作目录。runner 生成独立 `CODEX_HOME` 与不继承 `:workspace` 的 run-scoped `aiworker` permission profile：文件系统默认拒绝，只读放行 Codex 最小平台运行时、当前 PATH 所需工具链和 linked-worktree Git metadata，并放行 detached worktree 与隔离 HOME 写入；source checkout index 和 worktree `.env*` 显式拒绝，普通真实 HOME 与 source checkout 路径的真实哨兵也被 OS sandbox 拒绝。工具网络和 login shell 关闭，工具环境不继承宿主变量。daemon 在隔离 config 中先把当前 worktree 标记为 untrusted，使项目配置层不会加载；login shell、permission profile、shell policy 与用户已选 reasoning 仍由 CLI 最高优先级固定。当前 macOS Codex 会额外给普通 shell 放行 host `/tmp` 与 `/var/tmp`，因此这里不承诺完整 host 隔离。非交互式审批只使用 `--approve-for-me`，不再同时传旧 `--sandbox`，也不使用 `--dangerously-bypass-approvals-and-sandbox`。run 不创建 commit、不自动 merge；主工作区的未提交改动不被复制，必须在派发前明确提示给开发者。
 
 固定的默认推理档位是 profile 配置的一部分，而不是 Codex 可以静默降级的建议。v0.1 不接受 task 级档位覆盖；固定 Profile 原样使用其默认档位，只有 Profile 被设为“自动”时才不固定该 run 的具体档位。不同模型的档位枚举不同，界面不能预设一个通用的 `max` 选项。
 

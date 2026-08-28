@@ -28,6 +28,14 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(Path("/opt/homebrew/etc"), roots)
         self.assertNotIn(Path("/opt/homebrew/var"), roots)
 
+    def test_package_and_framework_roots_are_not_granted_directly(self) -> None:
+        homebrew_roots = _tool_read_candidates(Path("/opt/homebrew"))
+
+        self.assertNotIn(Path("/opt/homebrew"), homebrew_roots)
+        self.assertIn(Path("/opt/homebrew/Cellar"), homebrew_roots)
+        self.assertIn(Path("/opt/homebrew/lib/node_modules"), homebrew_roots)
+        self.assertEqual(_tool_read_candidates(Path("/Library/Frameworks")), ())
+
     def test_tool_path_rewrites_source_entries_to_the_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -96,10 +104,7 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
         self.assertIn("allow_login_shell=false", overrides)
         self.assertIn('default_permissions="aiworker"', overrides)
-        self.assertIn(
-            f'projects.{json.dumps(str(worktree.resolve()))}.trust_level="untrusted"',
-            overrides,
-        )
+        self.assertFalse(any(value.startswith("projects.") for value in overrides))
         self.assertIn('shell_environment_policy.inherit="none"', overrides)
         self.assertIn(
             "shell_environment_policy.ignore_default_excludes=false", overrides
@@ -126,6 +131,10 @@ class RunnerBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config["default_permissions"], "aiworker")
         self.assertEqual(config["model"], "provider/model")
         self.assertEqual(config["model_reasoning_effort"], "high")
+        self.assertEqual(
+            config["projects"][str(worktree.resolve())]["trust_level"],
+            "untrusted",
+        )
         permissions = config["permissions"]["aiworker"]
         self.assertNotIn("extends", permissions)
         self.assertTrue(permissions["workspace_roots"][str(isolated_home)])

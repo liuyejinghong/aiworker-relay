@@ -25,12 +25,17 @@ def _tool_read_candidates(entry: Path) -> tuple[Path, ...]:
     """Return the narrow package roots needed by one PATH directory."""
 
     for prefix in (Path("/opt/homebrew"), Path("/usr/local")):
-        if entry == prefix or prefix in entry.parents:
+        package_roots = (
+            prefix / "Cellar",
+            prefix / "lib" / "node_modules",
+            prefix / "opt",
+        )
+        if entry == prefix:
+            return package_roots
+        if prefix in entry.parents:
             return (
                 entry,
-                prefix / "Cellar",
-                prefix / "lib" / "node_modules",
-                prefix / "opt",
+                *package_roots,
             )
 
     frameworks = Path("/Library/Frameworks")
@@ -38,8 +43,10 @@ def _tool_read_candidates(entry: Path) -> tuple[Path, ...]:
         relative = entry.relative_to(frameworks)
     except ValueError:
         relative = None
-    if relative and relative.parts[0].endswith(".framework"):
+    if relative and relative.parts and relative.parts[0].endswith(".framework"):
         return (frameworks / relative.parts[0],)
+    if entry == frameworks:
+        return ()
 
     for root in (
         Path("/Library/Developer/CommandLineTools"),
@@ -619,6 +626,9 @@ async def start_codex_run(
     config_lines.extend(
         [
             "",
+            f"[projects.{json.dumps(str(worktree))}]",
+            'trust_level = "untrusted"',
+            "",
             "[permissions.aiworker]",
             'description = "AIworker isolated write run"',
             "",
@@ -671,7 +681,6 @@ async def start_codex_run(
     overrides = [
         "allow_login_shell=false",
         'default_permissions="aiworker"',
-        f"projects.{json.dumps(str(worktree))}.trust_level=\"untrusted\"",
         'shell_environment_policy.inherit="none"',
         "shell_environment_policy.ignore_default_excludes=false",
         "shell_environment_policy.experimental_use_profile=false",

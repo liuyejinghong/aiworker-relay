@@ -1,6 +1,6 @@
 {
   "name": "aiworker-relay",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Locally managed OpenRouter coding workers for Codex.",
   "author": {
     "name": "AIworker"
