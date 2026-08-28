@@ -129,7 +129,7 @@ API key 的最终录入和更新入口在本机 Web 设置页。页面不得回�
 - Task Packet、隔离 `CODEX_HOME`、detached worktree、`codex exec --approve-for-me` harness、JSONL 证据和 TERM → 确认 KILL 的代码路径。
 - Keyring 保存与验证的实现入口，但不会在测试中读取、回显或代填用户 Key。
 
-最小真实 external write / 隔离 / evidence 回读 / TERM 停止验收已经完成。仍未完成的产品合同是 Profile 从 `unverified` 升为 `verified` 的能力标准及用户可见晋级操作；实际费用归因继续后置，本地模型接入也不在当前实现范围。Git-backed Marketplace CLI 安装与更新是独立的分发证据，不把未单独观察的 Codex Desktop 更新交互写成已完成。
+v0.1.16 的最小真实 external write、detached worktree / evidence 回读与 TERM 停止验收已经完成；这份历史证据不替代当前 permission-profile 源码候选的 Provider runtime 回读，也不构成完整 host isolation 声明。仍未完成的产品合同是 Profile 从 `unverified` 升为 `verified` 的能力标准及用户可见晋级操作；实际费用归因继续后置，本地模型接入也不在当前实现范围。Git-backed Marketplace CLI 安装与更新是独立的分发证据，不把未单独观察的 Codex Desktop 更新交互写成已完成。
 
 ## 与 `sol-worker-routing-codex` 的关系
 
