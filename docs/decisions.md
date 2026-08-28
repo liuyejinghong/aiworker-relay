@@ -474,7 +474,7 @@ The public catalog at `.agents/plugins/marketplace.json` refers to `https://gith
 
 ## D030 — Use workspace-write approval for non-interactive external runs
 
-Status: Superseded by D032
+Status: Superseded by D038
 
 Reason:
 

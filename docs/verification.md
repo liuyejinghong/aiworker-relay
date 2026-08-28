@@ -89,7 +89,7 @@
 
 | 验证点 | 结果 | 证据与边界 |
 | --- | --- | --- |
-| 完整 Python 回归 | 通过 | 2026-08-28 在最新 `main` 重建候选后，应用级 venv 执行 `unittest discover -s tests -v`，122 项通过；首次受当前父沙箱限制的 loopback bind 失败，授权本机 loopback 后同一套测试通过。 |
+| 完整 Python 回归 | 通过 | 2026-08-28 在最新 `main` 重建候选后，应用级 venv 执行 `unittest discover -s tests -v`，123 项通过；首次受当前父沙箱限制的 loopback bind 失败，授权本机 loopback 后同一套测试通过。 |
 | permission profile 真实哨兵 | 通过 | macOS Codex 0.149 的 `codex sandbox -P aiworker` 可运行直接 Command Line Tools Git、Homebrew `rg` / `node` 与 Python，可写 detached worktree 和 run-scoped HOME，并通过 `git status` / `git rev-parse --git-common-dir`。显式读取真实 `.zshrc`、主 checkout 与 source index 均被拒绝，假 OpenRouter Key 未进入工具环境；向主 checkout `.orch/outside-worktree-sentinel` 的固定越界写被 OS sandbox 拒绝，命令网络为 disabled。 |
 | Homebrew 读取边界 | 通过 | 2026-08-28 收窄后只放行实际 PATH 目录、Homebrew `Cellar` / `opt` / 全局 CLI package 树，不再放行整个 `/opt/homebrew` 或 `/usr/local`。Codex 0.149 真实 sandbox 中 Node、`rg`、Python 与 Command Line Tools Git 均可运行；`/opt/homebrew/var/mysql/server-key.pem` 的固定读取被拒绝，未打印其内容。 |
 | project-config precedence | 通过 | worktree 临时加入尝试开启 danger-full-access、login shell、full env inheritance、Key include 和低 reasoning 的 `.codex/config.toml`；`codex debug prompt-input` 回读仍为 deny-by-default `aiworker` profile 与固定 writable roots，未出现 danger-full-access，且 `AGENTS.md` 继续加载。临时恶意配置未进入提交。 |
