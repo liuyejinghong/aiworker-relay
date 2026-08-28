@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1.17 为当前 pre-release 源码候选，已实现固定持久本机看板、supervisor、派发、终态 run 数据删除、bounded RSS 与显式 permission profile。v0.1.16 已完成 Git-backed Marketplace 安装/更新、runtime 收敛和 NVIDIA dashboard-managed detached write/温和停止；这些是历史证据，v0.1.17 的安装态 Provider 回读仍待执行。LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`，普通用户环境不受改写。当前 macOS Codex 普通 shell 仍可访问 host temp；Profile 的 verified 晋级仍须遵从明确能力标准。
+状态：v0.1.18 为当前 pre-release 源码候选，已实现固定持久本机看板、supervisor、派发、终态 run 数据删除、bounded RSS 与显式 permission profile。v0.1.17 已完成 runtime 收敛，但首次 NVIDIA run 在 Provider 前因 strict-config project-trust override 不兼容而失败，没有写文件或自动重试；v0.1.18 修正后仍待安装态回读。v0.1.16 的 dashboard-managed detached write/温和停止只作为历史证据。LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`，普通用户环境不受改写；当前 macOS Codex 普通 shell 仍可访问 host temp。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 
