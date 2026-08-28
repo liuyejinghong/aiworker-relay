@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -83,10 +84,15 @@ class BootstrapSmokeTests(unittest.TestCase):
     def test_runtime_identity_round_trip_is_version_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             runtime = Path(temporary)
-            launcher._write_runtime_identity(
-                runtime,
-                version="0.1.0",
-                source_fingerprint=TEST_FINGERPRINT,
+            (runtime / launcher.RUNTIME_IDENTITY_FILE).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "version": "0.1.0",
+                        "source_fingerprint": TEST_FINGERPRINT,
+                    }
+                ),
+                encoding="utf-8",
             )
 
             self.assertEqual(
@@ -100,6 +106,91 @@ class BootstrapSmokeTests(unittest.TestCase):
                     runtime, version="0.1.1"
                 )
             )
+
+    def test_runtime_identity_records_the_accepted_resolved_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            packages = [
+                {"name": "codex-orchestrator", "version": "0.1.0"},
+                {"name": "pip", "version": "26.2.1"},
+            ]
+            launcher._write_runtime_identity(
+                runtime,
+                version="0.1.0",
+                source_fingerprint=TEST_FINGERPRINT,
+                dependency_lock="runtime-macos-py3.14",
+                dependency_lock_sha256="sha256:" + "b" * 64,
+                python_version="3.14.3",
+                packages=packages,
+            )
+
+            identity = launcher._read_runtime_identity(runtime, version="0.1.0")
+
+        self.assertIsNotNone(identity)
+        assert identity is not None
+        self.assertEqual(identity["schema_version"], 2)
+        self.assertEqual(identity["dependency_lock"], "runtime-macos-py3.14")
+        self.assertEqual(identity["packages"], packages)
+
+    def test_supported_runtime_locks_are_complete_and_version_aligned(self) -> None:
+        expected: dict[str, str] | None = None
+        for minor in ("3.12", "3.13", "3.14"):
+            path = PLUGIN_ROOT / "locks" / f"runtime-macos-py{minor}.txt"
+            packages = launcher.locked_packages(path)
+            self.assertEqual(len(packages), 19)
+            self.assertEqual(packages["pip"], "26.2.1")
+            self.assertEqual(packages["setuptools"], "84.0.0")
+            if expected is None:
+                expected = packages
+            else:
+                self.assertEqual(packages, expected)
+
+    def test_free_threaded_python_is_outside_the_locked_runtime_matrix(self) -> None:
+        with patch.object(launcher.sysconfig, "get_config_var", return_value=1):
+            with self.assertRaisesRegex(
+                launcher.RuntimeUpdateError, "standard CPython build"
+            ):
+                launcher.runtime_lock_path()
+
+    def test_runtime_install_uses_hashed_wheels_then_builds_without_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "venv"
+            runtime.mkdir()
+            lock = root / "runtime-macos-py3.14.txt"
+            lock.write_text(
+                "pip==26.2.1 --hash=sha256:" + "1" * 64 + "\n"
+                "setuptools==84.0.0 --hash=sha256:" + "2" * 64 + "\n",
+                encoding="utf-8",
+            )
+            packages = [
+                {"name": "codex-orchestrator", "version": "0.1.0"},
+                {"name": "pip", "version": "26.2.1"},
+                {"name": "setuptools", "version": "84.0.0"},
+            ]
+            completed = subprocess.CompletedProcess([], 0, "", "")
+            with (
+                patch.object(launcher, "runtime_lock_path", return_value=lock),
+                patch.object(launcher.venv.EnvBuilder, "create"),
+                patch.object(launcher.subprocess, "run", return_value=completed) as run,
+                patch.object(launcher, "_installed_packages", return_value=packages),
+                patch.object(launcher, "installed_runtime_version", return_value="0.1.0"),
+            ):
+                launcher._install_runtime_at(
+                    runtime,
+                    expected_version="0.1.0",
+                    expected_source_fingerprint=TEST_FINGERPRINT,
+                )
+
+        dependency_command = run.call_args_list[0].args[0]
+        source_command = run.call_args_list[1].args[0]
+        self.assertIn("--require-hashes", dependency_command)
+        self.assertIn("--only-binary", dependency_command)
+        self.assertIn("--no-deps", dependency_command)
+        self.assertEqual(dependency_command[-2:], ["--requirement", str(lock)])
+        self.assertIn("--no-build-isolation", source_command)
+        self.assertIn("--no-deps", source_command)
+        self.assertEqual(source_command[-1], str(PLUGIN_ROOT))
 
     def test_same_version_different_source_requires_runtime_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

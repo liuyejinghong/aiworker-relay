@@ -41,11 +41,11 @@ The developer's explicit Profile choice always wins. In v0.1, each run uses that
 - Dispatch is consent-gated. AIworker Relay does not silently intercept work, substitute a model, lower reasoning effort, or auto-fallback after a failure.
 - A frozen worker refuses new dispatches and tells the user why; it does not silently select another model.
 - The dashboard is a local control surface, not a hosted service or a replacement for Codex.
-- The v0.1.x preview supports macOS and one project-bound daemon. Windows, Linux, multi-project control, actual-cost budgets, and independently verifiable worker test evidence are not release claims.
+- The v0.1.x preview supports macOS arm64/x86_64 with standard CPython 3.12, 3.13, or 3.14 and one project-bound daemon. Windows, Linux, free-threaded or other Python builds, other Python minors, multi-project control, actual-cost budgets, and independently verifiable worker test evidence are not release claims.
 
 ## Current release status
 
-**Pre-release.** v0.1.19 is the current source candidate; v0.1.18 remains the installed candidate that completed the managed NVIDIA acceptance run. That run, `b221a85785fd4cf6b618f07ca416068d`, created one 34-byte marker in the detached worktree, produced a one-file diff/files evidence set, and exited through the control plane's TERM path with `term_exited`, exit code 0, and no KILL. v0.1.19 adds deterministic source-fingerprint convergence so same-version source drift is no longer reported as current; it has not been installed or released. The preceding v0.1.17 run failed before Provider access because Codex 0.149 rejected a dynamic project-trust CLI override; it wrote nothing and was not retried until the user explicitly authorized v0.1.18. Current macOS Codex runtimes still expose host temp directories to ordinary sandboxed shell processes, so this candidate does not claim complete host isolation. The NVIDIA Profile remains `unverified` pending an accepted promotion contract. No tag or GitHub Release has been created.
+**Pre-release.** v0.1.19 is the current source candidate; v0.1.18 remains the installed candidate that completed the managed NVIDIA acceptance run. That run, `b221a85785fd4cf6b618f07ca416068d`, created one 34-byte marker in the detached worktree, produced a one-file diff/files evidence set, and exited through the control plane's TERM path with `term_exited`, exit code 0, and no KILL. v0.1.19 adds deterministic source-fingerprint convergence plus per-Python-minor, hash-checked macOS runtime locks; the candidate records the accepted lock and complete resolved package set in its runtime identity. It has not been installed or released. The preceding v0.1.17 run failed before Provider access because Codex 0.149 rejected a dynamic project-trust CLI override; it wrote nothing and was not retried until the user explicitly authorized v0.1.18. Current macOS Codex runtimes still expose host temp directories to ordinary sandboxed shell processes, so this candidate does not claim complete host isolation. The NVIDIA Profile remains `unverified` pending an accepted promotion contract. No tag or GitHub Release has been created.
 
 Source repository: [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay). The documented Git marketplace CLI flow has been observed end to end; that does not by itself establish every Codex Desktop update interaction or a public release.
 
@@ -69,7 +69,7 @@ The detailed product and technical documents are currently maintained in Chinese
 
 ## Development
 
-AIworker Relay requires Python 3.12+ for its local runtime. From a source checkout with its development environment installed:
+The v0.1.x setup contract supports standard CPython 3.12, 3.13, and 3.14 on macOS arm64/x86_64. From a source checkout with its development environment installed:
 
 ```bash
 PYTHONPATH=plugins/aiworker-relay/src .venv/bin/python -m unittest discover -s tests -v

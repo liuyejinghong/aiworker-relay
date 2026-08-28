@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.19 为当前源码候选，v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在既有固定持久控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile 上，增加 bundle/runtime/daemon 的确定性 source fingerprint 收敛；它尚未安装、打 tag 或发布。v0.1.17 的首次 NVIDIA run 在 Provider 前因 Codex 0.149 strict-config 不接受动态 project-trust CLI override 而失败，没有写文件或自动重试；v0.1.18 修正后，run `b221a85785fd4cf6b618f07ca416068d` 已在 detached worktree 创建唯一 34-byte marker，diff/files 完整回读，并由受管 TERM 收敛为 `term_exited`、退出码 0。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
+状态：v0.1.19 为当前源码候选，v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在既有固定持久控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile 上，增加 bundle/runtime/daemon 的确定性 source fingerprint 收敛，以及 macOS arm64/x86_64、Python 3.12/3.13/3.14 的 hash-checked runtime locks；它尚未安装、打 tag 或发布。v0.1.17 的首次 NVIDIA run 在 Provider 前因 Codex 0.149 strict-config 不接受动态 project-trust CLI override 而失败，没有写文件或自动重试；v0.1.18 修正后，run `b221a85785fd4cf6b618f07ca416068d` 已在 detached worktree 创建唯一 34-byte marker，diff/files 完整回读，并由受管 TERM 收敛为 `term_exited`、退出码 0。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
 
 ## 核心原则
 
@@ -14,7 +14,7 @@
 
 仓库根目录的 `.agents/plugins/marketplace.json` 是公开 Git marketplace catalog，并以 `git-subdir` 指向同一仓库内的 `./plugins/aiworker-relay`。该目录是唯一可安装的 Plugin source，内含 `.codex-plugin/plugin.json`、Skill、launcher、`pyproject.toml` 与 Python runtime；仓库根目录保留产品文档、图与开发测试材料。它不是第二份 runtime，也不依赖仓库外的全局 Python 包。local marketplace 只保留给源码开发，不作为面向普通开发者的发布说明。
 
-setup 对该唯一 Plugin source 的全部分发文件计算一个确定性 `sha256` fingerprint；Python bytecode、build 目录和 egg metadata 等 setup 可再生文件不参与。launcher 将 version 与 fingerprint 一起写入新 venv 的 release identity，daemon record、health 与 overview 回读同一身份。同 version 但 fingerprint 不同、身份缺失或三者不一致都要求重新 setup；活跃 run 仍只延后更新而不会被停止。fingerprint 用于本机内容收敛，稳定发布仍必须另外用受控 Git source SHA 证明这些 bytes 来自哪个已审查 commit。
+setup 对该唯一 Plugin source 的全部分发文件计算一个确定性 `sha256` fingerprint；Python bytecode、build 目录和 egg metadata 等 setup 可再生文件不参与。launcher 将 version 与 fingerprint 一起写入新 venv 的 release identity，daemon record、health 与 overview 回读同一身份。同 version 但 fingerprint 不同、身份缺失或三者不一致都要求重新 setup；活跃 run 仍只延后更新而不会被停止。fingerprint 用于本机内容收敛，稳定发布仍必须另外用受控 Git source SHA 证明这些 bytes 来自哪个已审查 commit。三个随 Plugin 分发的 requirements lock 分别固定 Python 3.12、3.13、3.14 在 macOS arm64/x86_64 上的完整 wheel、pip 与 setuptools 版本和 SHA-256；安装成功后 release identity 还记录 lock 名称、lock 摘要、精确 Python 版本和完整已安装包集合。
 
 首次配置从一个新的 Codex task 中调用 `$aiworker-relay setup` 开始，随后由 Skill 打开本机 Web 控制面。API Key 与 worker Profile 只在这个 Web 控制面中配置；Skill、Codex 对话与普通 CLI 不接收这些配置值。之后用户仍像平时一样把任务交给 Codex：可以明确指定 profile，也可以接受 Codex 的建议。外部付费用量的派发不应通过不可见的全局拦截发生。
 
@@ -47,7 +47,7 @@ v0.1.x 公开预览只支持 macOS，并保持一个持久 daemon 绑定一个�
 | 关注点 | 选择 | 边界与原因 |
 | --- | --- | --- |
 | 本机进程 | 一个持久 `external-workersd` | 同一 Python 进程服务本机 Web、状态 API、SSE 与外部 run 监管；固定在 `127.0.0.1:49178`。macOS 的用户级 LaunchAgent 在登录时启动该同一进程。 |
-| 本机运行时 | 用户应用数据目录内的专用 `venv` | 明确的 `$aiworker-relay setup` 检查 Python 3.12+，并在缺失时于同一次操作安装依赖；不假设或改写全局 Python 包。 |
+| 本机运行时 | 用户应用数据目录内的专用 `venv` | 明确的 `$aiworker-relay setup` 接受 macOS arm64/x86_64 上的标准 CPython 3.12、3.13 或 3.14，并在缺失时按对应 hash lock 安装依赖；不假设或改写全局 Python 包。 |
 | 本机网络边界 | loopback `127.0.0.1` | Web、SSE 和控制 API 仅服务本机；launcher 通过原子 `daemon.json` 检查、复用或清理失效 daemon 记录。记录绑定一个项目根目录，不同项目会拒绝复用，避免误派 worktree。 |
 | 后端 | Python 3.12+、`asyncio`、`aiohttp` | `asyncio` 负责外部 CLI 的异步生命周期；`aiohttp` 只负责本机 HTTP、静态资源和 SSE，避免手写 HTTP 协议或引入 FastAPI/Uvicorn 组合。 |
 | 页面 | 静态 HTML、CSS、原生 JavaScript | 不引入 React、构建链、Node 常驻进程或桌面壳。现有原型可直接演进为页面资源。 |
@@ -57,7 +57,7 @@ v0.1.x 公开预览只支持 macOS，并保持一个持久 daemon 绑定一个�
 | Provider HTTPS | `truststore` | 对 OpenRouter 请求使用操作系统证书库，不关闭 TLS 校验，也不假设 Python 自带 CA bundle 已正确安装。 |
 | 本地数据 | 原子 JSON + JSONL | 用户级 Profile 放在应用数据目录；项目级 run 证据与 worktree 放在 `.orch/`，默认保留到用户显式删除，Plugin 卸载不删除它们。实际费用汇总在可靠归因前不生成。 |
 
-运行时依赖只有 `aiohttp`、`psutil`、`keyring` 和 `truststore`。不引入数据库、Redis、消息队列、WebSocket 框架、前端框架或额外的进程管理器。
+直接运行时依赖只有 `aiohttp`、`psutil`、`keyring` 和 `truststore`。setup 只从显式的官方 PyPI index 安装 lock 中列出的精确 wheel：所有直接与传递依赖、pip 和 setuptools 都带本地 SHA-256；Plugin source 随后用固定 setuptools、`--no-build-isolation --no-deps` 构建。`pip check` 和完整 package-set readback 通过后才写入 runtime identity。不引入数据库、Redis、消息队列、WebSocket 框架、前端框架、额外包管理器或远程 installer。
 
 空闲成本边界如下：持久 daemon 只维持一个 loopback listener；它在空闲时不做状态采样、自动 provider 请求或外部 worker 派发。账户与公开跑分只在用户主动刷新时读取；只有活跃的外部 run 才有一个 2 秒 RSS 采样任务。原生 Codex worker 不进入该采样循环。
 
