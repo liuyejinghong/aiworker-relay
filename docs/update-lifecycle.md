@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.18 为当前 pre-release 源码候选。v0.1.17 已经通过官方可回滚路径完成 bundle/runtime/daemon 收敛，但首次真实 run 在 Provider 前暴露 strict-config project-trust override 兼容缺陷；v0.1.18 使用新的版本位承载修正，仍须通过同一受控替换路径安装和回读，不以同版本手工覆盖 venv。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
+状态：v0.1.18 为当前已安装的 pre-release 源码候选。官方 launcher 已将 bundle/runtime/daemon 收敛到 v0.1.18；用户授权的 NVIDIA run `b221a85785fd4cf6b618f07ca416068d` 完成唯一 marker 写入与 diff/files 回读，并由 managed TERM 以 `term_exited`、退出码 0 收敛。v0.1.17 在 Provider 前暴露的 strict-config project-trust override 缺陷已由该安装态 run 闭环。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
 
 ## 为什么需要这一项
 

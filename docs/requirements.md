@@ -69,7 +69,7 @@
 
 本次已完成：符合 Codex marketplace source 约定的 AIworker Relay Plugin package、`aiworker-relay` Skill、应用级 bootstrap launcher、固定 loopback `external-workersd`、Profile / Key / run API、账户与公开跑分的按需读取、静态多页 Web、隔离 worktree / `codex exec` 路径、JSONL 证据与两阶段停止代码；canonical package `VERSION`、setup-only runtime 收敛、活跃 run 更新延后、持久控制面迁移、更新失败恢复与 dispatch 版本不一致拒绝。
 
-本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；Git-backed marketplace 的干净安装和两次更新；以及真实用户应用数据的空闲 runtime 收敛。2026-08-26 对 `nvidia/nemotron-3-ultra-550b-a55b:free` 的直接 Responses、流式 Responses 和函数调用均返回 200；2026-08-27 同一模型的 dashboard-managed detached run 实际创建了限定 marker，文件清单仅该路径、`git diff --check` 通过，随后在 PID / PGID 可观测和 RSS 采样期间由控制面 TERM 收敛为 `term_exited`、退出码 0。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree、TERM → KILL、runtime 失败恢复、active update defer、错误摘要脱敏及非交互式审批参数。
+本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；Git-backed marketplace 的干净安装和两次更新；以及真实用户应用数据的空闲 runtime 收敛。2026-08-28，安装态 v0.1.18 使用 `nvidia/nemotron-3-ultra-550b-a55b:free` 与 `profile_auto` reasoning 完成一次用户明确授权的 dashboard-managed detached run：唯一 34-byte marker、diff/files 和 lifecycle 均完成回读，随后在 PID / PGID 与 19 个 RSS 样本可观测期间由控制面 TERM 收敛为 `term_exited`、退出码 0，未使用 KILL。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree、TERM → KILL、runtime 失败恢复、active update defer、错误摘要脱敏及非交互式审批参数。
 
 尚未验收：Profile 从 `unverified` 升为 `verified` 所需的能力矩阵和用户可见晋级操作尚未接受；因此 NVIDIA 的最小 write / stop 证据通过后仍不静默改写其标签。Ox Alpha 的实验性 write probe 仍以 provider `400 Server tool request failed` 结束。实际费用、日/月汇总、预算、自动路由与 fallback 均未实现。
 
