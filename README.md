@@ -45,7 +45,7 @@ The developer's explicit Profile choice always wins. In v0.1, each run uses that
 
 ## Current release status
 
-**Pre-release.** v0.1.16 provides a persistent loopback dashboard without idle provider activity or changes to the user's global environment. The explicitly selected NVIDIA Profile has completed a dashboard-managed detached run that wrote only the fixed acceptance marker, passed file/diff readback, and was stopped by TERM as `term_exited` without KILL. A clean isolated Codex configuration has installed `aiworker-relay@aiworker-relay` version `0.1.16`; its launcher then converged with the verified idle local control plane. This remains pre-release evidence rather than proof of every Codex Desktop update interaction. No tag or GitHub Release is created by this pre-release.
+**Pre-release.** v0.1.17 is the current source candidate. It adds the explicit run-scoped permission profile and local run-data controls reviewed on current `main`; its installed real-Provider acceptance is still pending. The earlier v0.1.16 NVIDIA run remains historical evidence for a dashboard-managed detached write, file/diff readback, and TERM stop, not proof for the new runner boundary. Current macOS Codex runtimes still expose host temp directories to ordinary sandboxed shell processes, so this candidate does not claim complete host isolation. No tag or GitHub Release has been created.
 
 Source repository: [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay). The documented Git marketplace CLI flow has been observed end to end; that does not by itself establish every Codex Desktop update interaction or a public release.
 

@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.16 已实现固定持久本机控制面、静态看板、Profile、隔离 run 和证据路径；Git-backed Marketplace 的干净安装与两次更新、以及 bundle/runtime/daemon 的 setup 收敛均已实测。LaunchAgent 现在带有只覆盖自身的最小 `PATH`，以解析 setup 时确定的 Codex CLI 及其 Node runtime；不改写全局环境、Key 或 Profile。非交互式 `codex exec` 的当前源码候选使用 run-scoped permission profile 与 `--approve-for-me`，不再依赖可被项目配置削弱的默认 workspace-write 配置。2026-08-27 的 NVIDIA dashboard-managed run 已在 detached worktree 中完成精确 marker 写入、文件/diff 回读和真实 `TERM → term_exited` 停止闭环；permission profile 的无 Provider 哨兵已确认 source checkout、普通真实 HOME 路径和工具网络被拒绝，但当前 macOS Codex 普通 shell 仍可访问 host temp，修正后的真实 Provider run 也尚未执行。Profile 的 `verified` 晋级规则仍是独立待决产品问题，不能因这一次窄验收被静默改写。
+状态：v0.1.17 为当前 pre-release 源码候选，已实现固定持久本机控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile。Git-backed Marketplace 的历史干净安装/更新和 v0.1.16 bundle/runtime/daemon 收敛均已实测；v0.1.17 的安装态 Provider 回读仍待执行。LaunchAgent 只带解析 setup 时确定的 Codex CLI 及 Node runtime 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。非交互式 `codex exec` 使用 `--approve-for-me` 与高优先级 permission profile，不再依赖可被项目配置削弱的默认 workspace-write 配置。无 Provider 哨兵已确认 source checkout、普通真实 HOME 路径和工具网络被拒绝，但当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。Profile 的 `verified` 晋级规则仍是独立待决产品问题，不能因一次窄验收被静默改写。
 
 ## 核心原则
 

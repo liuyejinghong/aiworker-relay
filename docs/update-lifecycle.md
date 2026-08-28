@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.16 已实现并在用户应用数据中完成受控 runtime 收敛和持久本机入口验收。macOS LaunchAgent 为其自身提供解析 Codex CLI/Node 所需的最小 `PATH`；空闲 daemon 的受控停启已在同一固定地址完成真实回读。2026-08-27 的全新隔离 `CODEX_HOME` 已从公开 Git Marketplace 安装 `0.1.16`，其 launcher `setup --no-open` 与当前同项目的空闲本机控制面收敛。未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
+状态：v0.1.17 为当前 pre-release 源码候选；该版本位用于让官方 launcher 通过受控、可回滚的替换路径安装已合并的 permission-profile 与本地数据修正，不以同版本手工覆盖 venv。v0.1.16 已在用户应用数据中完成 runtime 收敛、持久本机入口、空闲 daemon 停启和公开 Git Marketplace 安装验收；v0.1.17 的安装态收敛与 Provider 回读仍待执行。macOS LaunchAgent 只为自身提供解析 Codex CLI/Node 所需的最小 `PATH`；未单独观察的 Codex Desktop UI 更新交互继续按待验证处理。
 
 ## 为什么需要这一项
 
