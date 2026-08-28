@@ -123,7 +123,7 @@ v0.1.19 另修正同 version / 不同 source 仍被判为 `up_to_date` 的更新
 | immutable Plugin source | 通过 | `.agents/plugins/marketplace.json` 使用官方支持的 `git-subdir` + exact `sha`，指向 reviewed v0.1.19 commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`，不再把 Plugin source 解析到 mutable `main`。聚焦测试确认该 commit 的 `plugins/aiworker-relay` tree 与当前 release candidate 无差异。 |
 | 隔离 Codex CLI 安装 | 通过 | 全新临时 `CODEX_HOME` 添加本地 catalog 后，`codex plugin list` 精确展示 source URL、path 与上述 SHA；`codex plugin add aiworker-relay@aiworker-relay` 从 GitHub 安装到版本化 cache `0.1.19`。安装副本回读 version `0.1.19` 与 source fingerprint `sha256:1acdaffa2c68a43379192a08b0bb19e776dd22d5850b641c09c6fda426bfb20b`，与 reviewed source 一致。首次受父沙箱代理限制的 clone 在实际网络权限下对同一隔离目标重试成功，不构成产品自动重试。 |
 | release gate 源码 | 通过 | CI checkout 使用完整 history，使 exact-SHA/tree gate 可执行；GitHub 官方 `actions/checkout` 与 `actions/setup-python` 均更新为 Node 24 兼容的 v6 exact commit pins。42 项 bootstrap 合同测试、workflow YAML 解析和 `git diff --check` 通过。 |
-| GitHub repository settings | 待授权应用 | 当前 `main` 仍无 ruleset 或 branch protection。候选合同要求 PR、六路 strict required checks、禁止删除与 force-push；在该设置真实生效前不得关闭 Issue #8 或宣称 stable release gate。 |
+| GitHub repository settings | 通过 | active ruleset [`21734294`](https://github.com/liuyejinghong/aiworker-relay/rules/21734294) 精确命中默认分支 `main`，要求所有变更经 PR、六路 required checks strict 通过，并禁止删除与 force-push。GitHub API 回读 `enforcement=active`、`bypass_actors=[]`、`current_user_can_bypass=never`；branch-effective rules 回读同样的四类规则。PR #39 在该 ruleset 生效后仍为 `CLEAN / MERGEABLE`，六路 check 全部成功。 |
 | Codex Desktop 更新/回滚 | 待真实观察 | OpenAI 文档确认 Desktop 使用版本化 Plugin cache，但不承诺 marketplace refresh 会自动替换已安装副本。本轮尚未改变真实 Desktop Plugin 状态，因此不把隔离 CLI 安装扩大为 Desktop update/rollback 通过。 |
 
 ## 已验证结论

@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.19 的 reviewed Plugin source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；release-catalog 候选已用 exact `sha` 指向它，并通过隔离 Codex CLI 安装。v0.1.18 仍是真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。v0.1.19 把 source fingerprint 纳入 bundle/runtime/daemon 收敛，并为 macOS arm64/x86_64、标准 CPython 3.12/3.13/3.14 固定 hash-checked build/runtime set。当前仍待 main ruleset 和 Codex Desktop 更新行为验收；尚未打 tag 或创建 GitHub Release。
+状态：v0.1.19 的 reviewed Plugin source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；release-catalog 候选已用 exact `sha` 指向它，并通过隔离 Codex CLI 安装。v0.1.18 仍是真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。v0.1.19 把 source fingerprint 纳入 bundle/runtime/daemon 收敛，并为 macOS arm64/x86_64、标准 CPython 3.12/3.13/3.14 固定 hash-checked build/runtime set。GitHub ruleset `21734294` 已对 `main` active 生效；当前仍待 Codex Desktop 更新/回滚行为验收，尚未打 tag 或创建 GitHub Release。
 
 ## 为什么需要这一项
 

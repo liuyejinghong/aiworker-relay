@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1.19 为当前 release candidate，Git-backed catalog 候选把 Plugin source 固定到 reviewed commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`，并通过隔离 Codex CLI 安装；尚未完成真实 Desktop/runtime、仓库 ruleset、tag 或 Release。v0.1.18 仍是真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。固定持久本机看板、supervisor、派发、终态 run 数据删除、bounded RSS 与显式 permission profile 已实现；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
+状态：v0.1.19 为当前 release candidate，Git-backed catalog 候选把 Plugin source 固定到 reviewed commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`，并通过隔离 Codex CLI 安装；GitHub ruleset `21734294` 已对 `main` active 生效。尚未完成真实 Desktop/runtime、tag 或 Release。v0.1.18 仍是真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。固定持久本机看板、supervisor、派发、终态 run 数据删除、bounded RSS 与显式 permission profile 已实现；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 
