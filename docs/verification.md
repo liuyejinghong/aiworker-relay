@@ -124,7 +124,22 @@ v0.1.19 另修正同 version / 不同 source 仍被判为 `up_to_date` 的更新
 | 隔离 Codex CLI 安装 | 通过 | 全新临时 `CODEX_HOME` 添加本地 catalog 后，`codex plugin list` 精确展示 source URL、path 与上述 SHA；`codex plugin add aiworker-relay@aiworker-relay` 从 GitHub 安装到版本化 cache `0.1.19`。安装副本回读 version `0.1.19` 与 source fingerprint `sha256:1acdaffa2c68a43379192a08b0bb19e776dd22d5850b641c09c6fda426bfb20b`，与 reviewed source 一致。首次受父沙箱代理限制的 clone 在实际网络权限下对同一隔离目标重试成功，不构成产品自动重试。 |
 | release gate 源码 | 通过 | CI checkout 使用完整 history，使 exact-SHA/tree gate 可执行；GitHub 官方 `actions/checkout` 与 `actions/setup-python` 均更新为 Node 24 兼容的 v6 exact commit pins。42 项 bootstrap 合同测试、workflow YAML 解析和 `git diff --check` 通过。 |
 | GitHub repository settings | 通过 | active ruleset [`21734294`](https://github.com/liuyejinghong/aiworker-relay/rules/21734294) 精确命中默认分支 `main`，要求所有变更经 PR、六路 required checks strict 通过，并禁止删除与 force-push。GitHub API 回读 `enforcement=active`、`bypass_actors=[]`、`current_user_can_bypass=never`；branch-effective rules 回读同样的四类规则。PR #39 在该 ruleset 生效后仍为 `CLEAN / MERGEABLE`，六路 check 全部成功。 |
-| Codex Desktop 更新/回滚 | 待真实观察 | OpenAI 文档确认 Desktop 使用版本化 Plugin cache，但不承诺 marketplace refresh 会自动替换已安装副本。本轮尚未改变真实 Desktop Plugin 状态，因此不把隔离 CLI 安装扩大为 Desktop update/rollback 通过。 |
+| Codex Desktop 更新/回滚 | 后续通过 | 本节当时没有改变真实 Desktop Plugin 状态，因此隔离 CLI 安装本身不扩大为 Desktop 通过；随后同日完成的真实共享安装态验收记录如下。 |
+
+## 2026-08-28 Codex Desktop 更新、回滚与恢复验收
+
+本次只操作 Codex Desktop 与 CLI 共用的用户级 Plugin 配置、版本化 cache 和 AIworker 应用级 runtime。开始前确认 daemon 空闲且 `active_run_ids=[]`；没有读取 Key 内容、派发任务、切换模型/Profile/reasoning、自动重试、commit、merge、tag 或创建 GitHub Release。
+
+| 验证点 | 结果 | 证据与边界 |
+| --- | --- | --- |
+| 前置状态与数据快照 | 通过 | OpenRouter Key 状态为 configured；两个既有 Profile 分别为 `stealth/ox-alpha` 与 `nvidia/nemotron-3-ultra-550b-a55b:free`，均为 enabled / unverified、reasoning `auto`。`profiles.json` SHA-256 为 `c462fc0aded1c88e69673e535ca57a5427b3f3e6bae0421072363b3b12e5fa5d`。历史 `external-workers@aiworker-local` 安装保留，不把迁移旧 identity 混入本轮验收。 |
+| public v0.1.19 安装与 setup | 通过 | 通过官方 Git marketplace 命令添加 `liuyejinghong/aiworker-relay`，snapshot HEAD 为 catalog commit `da60619f2884a6c633a8251db8d744584f0aeab1`；catalog entry 解析到 exact Plugin source `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`。安装副本位于版本化 cache `aiworker-relay/aiworker-relay/0.1.19`；`setup --no-open` 后 bundle/runtime/daemon 均为 v0.1.19、fingerprint 均为 `sha256:1acdaffa2c68a43379192a08b0bb19e776dd22d5850b641c09c6fda426bfb20b`，daemon 为 persistent / idle / up-to-date。Python 3.14 lock SHA-256 为 `64457894b232e0b6e0928cf027fcc3eb9b76e70e0a0286ac253328633c9b7ebf`，完整 20-package set 回读通过。 |
+| exact v0.1.18 回滚 | 通过 | 临时 rollback marketplace 只暴露 exact source `7a840b72f5b6728a10b564602003c1a8594c8873` 的 v0.1.18。安装该副本、移除 public v0.1.19 installed entry 并执行其随包 setup 后，真实 runtime/daemon 回读 v0.1.18、persistent / idle / up-to-date；public v0.1.19 cache 已不存在。没有自研 updater、模型切换或外部 run。 |
+| public v0.1.19 恢复与清理 | 通过 | 执行 public marketplace refresh 后重新安装 v0.1.19 并再次 setup，最终 bundle/runtime/daemon 恢复为 v0.1.19 与相同 fingerprint。临时 rollback Plugin、marketplace、cache 和 temp 目录全部移除；public marketplace/Plugin 与 legacy alpha Plugin 保留，`venv.previous` 不存在。 |
+| Key / Profile / active-run 不变量 | 通过 | 安装、回滚、恢复后 `profiles.json` SHA-256 未变，Key 仍为 configured，两个 Profile 的 model、enabled/unverified 状态与 reasoning 均未变；`active_run_ids` 始终为空。Key 的值从未进入命令输出或文档。 |
+| Desktop Plugins Directory 回读 | 通过（人工观察） | 用户最终在 Codex Desktop 的 Plugins Directory 确认 **AIworker Relay** 为已安装、已启用的 v0.1.19。当前自动化工具因安全限制不能控制 Codex 应用，因此视觉证据由用户完成；这里证明 Desktop 反映了共享安装态，不声称使用或验证了一个未操作的原生更新按钮。 |
+
+结论：v0.1.19 的 immutable Git source、共享 Desktop Plugin 安装态、应用级 runtime 与 daemon identity 已完成一次可逆的真实用户链路闭环；用户 Key/Profile 得到保留。active-run defer 与安装失败恢复已有聚焦 runtime 测试，但本次 Desktop 验收刻意保持空闲，没有为重复证明代码合同而派发任务或注入失败。
 
 ## 已验证结论
 

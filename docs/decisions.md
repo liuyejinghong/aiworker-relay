@@ -470,7 +470,7 @@ Presenting the local marketplace as the public channel, building a separate cust
 
 Consequences:
 
-The public catalog at `.agents/plugins/marketplace.json` refers to `https://github.com/liuyejinghong/aiworker-relay.git`, `./plugins/aiworker-relay`, and `main`. Source-checkout development may still use a local marketplace, but public installation and update instructions use `codex plugin marketplace add` and `codex plugin add`. A clean isolated CLI install plus `0.1.6 → 0.1.7 → 0.1.8` marketplace upgrades, and a fresh current `0.1.9` install, have been observed; untested Codex Desktop update interactions are not silently claimed as equivalent.
+The public catalog at `.agents/plugins/marketplace.json` refers to `https://github.com/liuyejinghong/aiworker-relay.git`, `./plugins/aiworker-relay`, and the protected catalog branch. Source-checkout development may still use a local marketplace, but public installation and update instructions use `codex plugin marketplace add` and `codex plugin add`. A clean isolated CLI install plus `0.1.6 → 0.1.7 → 0.1.8` marketplace upgrades, and a fresh `0.1.9` install, were observed during the early pre-release. On 2026-08-28, the real user's shared Codex Desktop config/cache completed `v0.1.19 install → exact v0.1.18 rollback → v0.1.19 restore`; the Desktop Plugins Directory then showed v0.1.19 installed and enabled. This acceptance does not invent behavior for a native update button that was not used.
 
 ## D030 — Use workspace-write approval for non-interactive external runs
 

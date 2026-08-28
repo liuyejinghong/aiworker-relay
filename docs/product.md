@@ -1,6 +1,6 @@
 # 产品定义：Codex 外部 Worker Plugin
 
-状态：v0.1.19 为当前源码候选，v0.1.18 仍是本机已安装并完成真实 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在固定持久本机控制面、应用级 runtime 收敛、显式本地 run 数据删除、bounded RSS 与 run-scoped permission profile 上增加确定性 source fingerprint；它尚未安装或发布。v0.1.17 的首次 NVIDIA run 在 Provider 前因 strict-config project-trust override 不兼容而失败，没有写文件或自动重试；v0.1.18 的用户授权 run `b221a85785fd4cf6b618f07ca416068d` 已完成唯一 marker 写入、diff/files 回读和温和 `term_exited` 停止。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。NVIDIA Profile 的 `verified` 晋级仍依赖尚未接受的能力标准，不能静默变更。
+状态：v0.1.19 为当前源码候选，并已在真实用户 Codex Desktop 共享安装态完成 `v0.1.19 → v0.1.18 → v0.1.19` 的空闲更新/回滚/恢复验收；最终 Plugin 已安装并启用，bundle/runtime/daemon 一致，Key/Profile 保持不变。v0.1.18 的用户授权 run `b221a85785fd4cf6b618f07ca416068d` 继续提供真实 NVIDIA write / TERM 证据；本次更新链路没有派发任务、切换模型或改变 Profile。v0.1.19 仍未打 tag 或创建 GitHub Release。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。NVIDIA Profile 的 `verified` 晋级仍依赖尚未接受的能力标准，不能静默变更。
 
 ## 一句话
 
@@ -129,7 +129,7 @@ API key 的最终录入和更新入口在本机 Web 设置页。页面不得回�
 - Task Packet、隔离 `CODEX_HOME`、detached worktree、`codex exec --approve-for-me` harness、JSONL 证据和 TERM → 确认 KILL 的代码路径。
 - Keyring 保存与验证的实现入口，但不会在测试中读取、回显或代填用户 Key。
 
-v0.1.18 的最小真实 external write、detached worktree / evidence 回读与 TERM 停止验收已经完成；该证据不构成完整 host isolation 声明。仍未完成的产品合同是 Profile 从 `unverified` 升为 `verified` 的能力标准及用户可见晋级操作；实际费用归因继续后置，本地模型接入也不在当前实现范围。Git-backed Marketplace CLI 安装与更新是独立的分发证据，不把未单独观察的 Codex Desktop 更新交互写成已完成。
+v0.1.18 的最小真实 external write、detached worktree / evidence 回读与 TERM 停止验收已经完成；v0.1.19 的 Git-backed Plugin 也已在真实用户的 Codex Desktop 共享配置/cache 中完成安装、精确回滚和恢复，Desktop Plugins Directory 最终人工确认其为已安装、已启用的 v0.1.19。该证据不构成完整 host isolation 声明，也不扩展为未观察到的原生更新按钮语义。仍未完成的产品合同是 Profile 从 `unverified` 升为 `verified` 的能力标准及用户可见晋级操作；实际费用归因继续后置，本地模型接入也不在当前实现范围。
 
 ## 与 `sol-worker-routing-codex` 的关系
 

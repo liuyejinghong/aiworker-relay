@@ -52,7 +52,7 @@
 - 持久 `external-workersd` 在空闲时只维持 loopback listener，不做状态采样、自动 provider 请求或自动派发；账户和公开跑分只接受用户主动刷新。只有活跃 external run 才有 RSS 采样。
 - v0.1.x 的一个 daemon 只服务 setup 时绑定的一个项目。第二个项目继续安全拒绝，不自动切换、不建设多项目 registry。
 - 目标是升级并融合进 `sol-worker-routing-codex`，不是长期维护平行路由项目。
-- 源码开发可使用 Codex local marketplace；面向其他开发者的 release catalog 使用 Git-backed marketplace，并只通过 exact `sha` selector 指向已经审查的 Plugin commit。Plugin 包含 `aiworker-relay` Skill，不含 MCP server；历史 CLI marketplace 安装/更新证据继续有效，但不替代当前 immutable candidate 或 Codex Desktop 更新交互的验收。
+- 源码开发可使用 Codex local marketplace；面向其他开发者的 release catalog 使用 Git-backed marketplace，并只通过 exact `sha` selector 指向已经审查的 Plugin commit。Plugin 包含 `aiworker-relay` Skill，不含 MCP server。当前 immutable v0.1.19 已在真实用户共享的 Codex Desktop 配置/cache 中完成安装、精确回滚和恢复；该证据只覆盖实际使用的 CLI marketplace 操作与 Desktop 最终安装态，不虚构未操作的原生更新按钮。
 - 公开源码仓库是 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。Plugin 源码先通过普通 PR 形成不可变 commit，随后单独的 catalog PR 才能前移 `.agents/plugins/marketplace.json` 中的 `sha`。仓库公开或普通源码合并不等于新 bundle 已发布；用户获得新 bundle 后仍须显式运行 `$aiworker-relay setup`。
 - `$aiworker-relay setup` 在受支持的 macOS/Python target 上于用户应用数据目录创建并复用专用 `venv`；明确的 setup 请求授权这一次本机安装，缺失依赖时不再要求第二次对话确认，不依赖或改写全局 Python 包。setup 按 Python minor 选择随 Plugin 分发的 requirements lock，只从显式官方 PyPI index 接受其中带 SHA-256 的 wheels；lock 固定 pip、setuptools、直接依赖和所有传递依赖。固定环境随后用 `--no-build-isolation --no-deps` 安装本地 Plugin source，并在 `pip check` 与完整 package-set readback 后写入 release identity。泛泛的配置请求不得自动 bootstrap。用户应用数据目录分别为 macOS `~/Library/Application Support/Codex External Workers`、Windows `%LOCALAPPDATA%\\Codex External Workers`、Linux `$XDG_DATA_HOME/codex-external-workers`（默认 `~/.local/share/codex-external-workers`）。
 - runtime freshness 由 human version 与确定性 Plugin source fingerprint 共同决定。fingerprint 覆盖 manifest、Skill、launcher、Python runtime 与静态页面等实际分发文件，排除 setup 可再生的 bytecode/build metadata；新 venv 保存 version-bound identity，daemon record、health 与 overview 回读同一 fingerprint。同 version / 不同 source、identity 缺失或 bundle/runtime/daemon 不一致都必须要求 setup；活跃 run 只延后，不因迁移自动停止。旧 runtime 可作为失败回滚目标保留，但在下一次正常 setup 前不得被宣称为当前 source。
@@ -68,9 +68,9 @@
 
 ## 当前阶段边界
 
-本次已完成：符合 Codex marketplace source 约定的 AIworker Relay Plugin package、`aiworker-relay` Skill、应用级 bootstrap launcher、固定 loopback `external-workersd`、Profile / Key / run API、账户与公开跑分的按需读取、静态多页 Web、隔离 worktree / `codex exec` 路径、JSONL 证据与两阶段停止代码；canonical package `VERSION`、version + source fingerprint 的 setup-only runtime 收敛、活跃 run 更新延后、持久控制面迁移、更新失败恢复与 dispatch 身份不一致拒绝；三个 macOS/Python-minor hash locks、固定构建环境、package-set readback 与 dependency identity；以及指向 reviewed v0.1.19 commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54` 的 immutable catalog candidate。该 candidate 已通过隔离 Codex CLI 安装，GitHub ruleset `21734294` 已对 `main` active 生效；尚未完成真实 Desktop/runtime、tag 或 Release。
+本次已完成：符合 Codex marketplace source 约定的 AIworker Relay Plugin package、`aiworker-relay` Skill、应用级 bootstrap launcher、固定 loopback `external-workersd`、Profile / Key / run API、账户与公开跑分的按需读取、静态多页 Web、隔离 worktree / `codex exec` 路径、JSONL 证据与两阶段停止代码；canonical package `VERSION`、version + source fingerprint 的 setup-only runtime 收敛、活跃 run 更新延后、持久控制面迁移、更新失败恢复与 dispatch 身份不一致拒绝；三个 macOS/Python-minor hash locks、固定构建环境、package-set readback 与 dependency identity；以及指向 reviewed v0.1.19 commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54` 的 immutable catalog。该 candidate 已通过隔离 Codex CLI 安装、真实用户 Codex Desktop 共享安装态的 `v0.1.19 → v0.1.18 → v0.1.19` 验收，以及最终 Plugins Directory 人工回读；GitHub ruleset `21734294` 已对 `main` active 生效。尚未创建 tag 或 Release。
 
-本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；Git-backed marketplace 的干净安装和两次更新；以及真实用户应用数据的空闲 runtime 收敛。2026-08-28，安装态 v0.1.18 使用 `nvidia/nemotron-3-ultra-550b-a55b:free` 与 `profile_auto` reasoning 完成一次用户明确授权的 dashboard-managed detached run：唯一 34-byte marker、diff/files 和 lifecycle 均完成回读，随后在 PID / PGID 与 19 个 RSS 样本可观测期间由控制面 TERM 收敛为 `term_exited`、退出码 0，未使用 KILL。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree、TERM → KILL、runtime 失败恢复、active update defer、错误摘要脱敏及非交互式审批参数。
+本机真实路径已验证：daemon 启动、页面资源、无 Key 的 Ox Alpha 模型发现、Profile 创建、推理档位带入、冻结与拒绝派发；management Key 的账户总额读取；Git-backed marketplace 的干净安装和两次更新；真实用户应用数据的空闲 runtime 收敛；以及真实用户共享 Desktop 安装态的 v0.1.19 安装、v0.1.18 回滚与 v0.1.19 恢复。该更新回路前后 `profiles.json` 摘要一致、Key 仍为 configured、模型与 reasoning 未变、active run 始终为空。2026-08-28，安装态 v0.1.18 使用 `nvidia/nemotron-3-ultra-550b-a55b:free` 与 `profile_auto` reasoning 完成一次用户明确授权的 dashboard-managed detached run：唯一 34-byte marker、diff/files 和 lifecycle 均完成回读，随后在 PID / PGID 与 19 个 RSS 样本可观测期间由控制面 TERM 收敛为 `term_exited`、退出码 0，未使用 KILL。聚焦测试覆盖 package、daemon、TLS、Profile、Task Packet、worktree、TERM → KILL、runtime 失败恢复、active update defer、错误摘要脱敏及非交互式审批参数。
 
 尚未验收：Profile 从 `unverified` 升为 `verified` 所需的能力矩阵和用户可见晋级操作尚未接受；因此 NVIDIA 的最小 write / stop 证据通过后仍不静默改写其标签。Ox Alpha 的实验性 write probe 仍以 provider `400 Server tool request failed` 结束。实际费用、日/月汇总、预算、自动路由与 fallback 均未实现。
 
@@ -85,7 +85,6 @@
 
 - major breaking change 是否要求额外用户确认；patch / minor 是否可沿用 setup 的既有本机安装授权？
 - 看板是否只呈现当前 bundle/runtime/daemon 版本与可操作的更新结果，还是确有用户价值需要维护 release history？
-- Codex Desktop 对 Git marketplace 刷新后“已安装 Plugin 更新”的实际行为是什么，应该如何准确写入新用户指引？
 
 ### 2. Task 和 Result Contract
 
@@ -109,7 +108,7 @@
 
 - 温和停止的等待时长、强制终止的确认方式和进程树处理规则是什么？
 - profile 冻结是否允许等待当前 run 完成，还是需要额外提供“冻结并停止”？
-- 本地 UI 与 Codex CLI 分别负责哪些操作入口；Codex Desktop 能否提供原生入口仍待验证。
+- 本地看板与 Codex Plugin 安装面分别应承担哪些新增操作；当前已确认 Desktop Plugins Directory 能回读共享安装态，本地控制面仍由固定 loopback 页面承担。
 - v0.1.x 之后若扩展 Windows / Linux，最低版本、密钥服务前置条件与进程终止验收矩阵是什么？
 - v0.1.x 之后若扩展多项目，应使用真正的多项目控制面还是显式切换？当前单项目安全拒绝不自动演进。
 - detached worktree 不复制 dirty workspace，但 linked worktree 仍共享 Git object database；如果未来把主 checkout 任意文件或 dangling object 也定义为机密，需要独立 clone/object store 的新产品决定。
