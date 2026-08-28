@@ -188,6 +188,36 @@ class RunLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(durable["rss_samples"]), RSS_SAMPLE_LIMIT)
             self.assertEqual(durable["rss_sample_count"], RSS_SAMPLE_LIMIT + 5)
 
+    async def test_legacy_rss_history_is_bounded_when_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state, record = self._state_and_record(root)
+            legacy = record.to_dict()
+            legacy.pop("rss_sample_count")
+            legacy.pop("rss_last_bytes")
+            legacy.pop("rss_peak_bytes")
+            legacy["rss_samples"] = [
+                {"at": "first", "rss_bytes": 1000},
+                *[
+                    {"at": str(value), "rss_bytes": value}
+                    for value in range(2, RSS_SAMPLE_LIMIT + 5)
+                ],
+            ]
+            (state.runs_root / record.run_id / "run.json").write_text(
+                json.dumps(legacy), encoding="utf-8"
+            )
+
+            loaded = DaemonState(
+                data_dir=root / "reloaded-app",
+                project_root=root,
+                codex_path="/usr/bin/true",
+            ).records[record.run_id]
+
+            self.assertEqual(len(loaded.rss_samples), RSS_SAMPLE_LIMIT)
+            self.assertEqual(loaded.rss_sample_count, RSS_SAMPLE_LIMIT + 4)
+            self.assertEqual(loaded.rss_last_bytes, RSS_SAMPLE_LIMIT + 4)
+            self.assertEqual(loaded.rss_peak_bytes, 1000)
+
     async def test_broadcast_delivers_one_payload_per_subscriber(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state, _ = self._state_and_record(Path(temporary))

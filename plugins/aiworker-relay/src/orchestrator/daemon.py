@@ -62,6 +62,30 @@ DELETABLE_RUN_STATUSES = frozenset(
 )
 
 
+def _bound_rss(record: RunRecord) -> None:
+    """Keep current and legacy RSS records within the accepted window."""
+
+    samples = record.rss_samples
+    values = [
+        sample.get("rss_bytes")
+        for sample in samples
+        if isinstance(sample, dict)
+        and isinstance(sample.get("rss_bytes"), int)
+        and not isinstance(sample.get("rss_bytes"), bool)
+    ]
+    record.rss_sample_count = max(record.rss_sample_count, len(samples))
+    if values:
+        record.rss_last_bytes = values[-1]
+        peak = max(values)
+        record.rss_peak_bytes = (
+            max(record.rss_peak_bytes, peak)
+            if isinstance(record.rss_peak_bytes, int)
+            else peak
+        )
+    if len(samples) > RSS_SAMPLE_LIMIT:
+        del samples[:-RSS_SAMPLE_LIMIT]
+
+
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 OPENROUTER_CURRENT_KEY_URL = "https://openrouter.ai/api/v1/key"
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
@@ -711,6 +735,7 @@ class DaemonState:
                 record = RunRecord.from_dict(value)
             except (KeyError, TypeError, ValueError):
                 continue
+            _bound_rss(record)
             self.records[record.run_id] = record
             self._evidence[record.run_id] = EvidenceStore(run_file.parent)
 
@@ -1848,15 +1873,8 @@ class DaemonState:
             async def sample(rss: int) -> None:
                 sample_value = {"at": utc_now(), "rss_bytes": rss}
                 record.rss_samples.append(sample_value)
-                if len(record.rss_samples) > RSS_SAMPLE_LIMIT:
-                    del record.rss_samples[:-RSS_SAMPLE_LIMIT]
                 record.rss_sample_count += 1
-                record.rss_last_bytes = rss
-                record.rss_peak_bytes = (
-                    rss
-                    if record.rss_peak_bytes is None
-                    else max(record.rss_peak_bytes, rss)
-                )
+                _bound_rss(record)
                 await self._try_broadcast(
                     "run.rss", run_id=record.run_id, **sample_value
                 )
