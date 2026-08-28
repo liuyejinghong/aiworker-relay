@@ -551,3 +551,41 @@ Consequences:
 When the owned process wait returns, the daemon first persists exit code, stop outcome, unavailable cost, and `incomplete`. It then collects `diff.patch` and `files.json`; a natural exit with code 0 also requires a readable `last-message.md`. The append-only `run.finished` event records that incomplete checkpoint plus the candidate result; only one subsequent atomic `run.json` write commits `succeeded`, `failed`, `stopped`, or `stopped_forced`. This ordering prevents an event from claiming that an uncommitted result already succeeded. Lifecycle persistence, evidence, or terminal-event failure leaves a terminal/incomplete record; the terminal SSE broadcast is best effort and cannot downgrade a durable final result. A process that survives cleanup keeps its handle as an active blocker until it exits.
 
 The daemon never reattaches a run after restart. It reconciles only records marked `starting`, `running`, or `stopping`, and signals an exact survivor after matching a positive PID, `psutil` creation time, and POSIX process group (or the Windows process tree). It sends TERM, then KILL only after rechecking identity and a bounded wait. Missing identity, PID reuse, an exited process, or a survivor that remains after KILL is recorded as user-visible `incomplete`; the last case blocks startup rather than exposing an unsafe recovery API. Shutdown uses the same bounded survivor rule and retains daemon identity when a process remains alive.
+
+## D035 — Scope v0.1.x to a macOS single-project preview
+
+Status: Accepted
+
+Reason:
+
+The current evidence is strongest on macOS and the persistent control plane is intentionally bound to one project. Expanding release claims without corresponding platform and multi-project evidence would weaken the product's trust boundary.
+
+Consequences:
+
+The v0.1.x public preview supports macOS and one project-bound daemon. A second project is refused rather than switched automatically. Windows, Linux and a multi-project control plane remain future work. v0.1.x does not claim actual per-run cost, budgets, or independently verifiable worker test evidence; Codex remains responsible for deciding when reported tests must be rerun.
+
+## D036 — Retain local run data until explicit deletion
+
+Status: Accepted
+
+Reason:
+
+Run evidence and detached worktrees are useful for Codex acceptance, but automatic age or size deletion could remove the only reviewable result. The user accepted an explicit local lifecycle instead of an automatic retention timer.
+
+Consequences:
+
+Task Packets, final messages, diffs, events, run metadata, isolated `CODEX_HOME` and detached worktrees under the project `.orch/` remain until the user explicitly deletes eligible terminal data. The dashboard discloses the location and policy. Active runs cannot be deleted. Worktrees are removed through Git-aware operations before their run evidence is removed; an interrupted deletion can be retried. Plugin uninstall and runtime updates preserve `.orch/`.
+
+Text evidence replaces only the exact configured OpenRouter Key. This is not a general secret scanner, and the product does not claim that raw worktrees or isolated `CODEX_HOME` are sanitized.
+
+## D037 — Keep RSS telemetry bounded and off the persistence hot path
+
+Status: Accepted
+
+Reason:
+
+Writing and fsyncing the complete growing run record plus a JSONL event every two seconds makes observation compete with health and stop handling. Full RSS history is not lifecycle authority.
+
+Consequences:
+
+Active runs continue to sample RSS every two seconds and send live SSE updates. Each run keeps only the latest 120 samples plus total sample count, last RSS and peak RSS. Individual samples do not rewrite `run.json` or append `events.jsonl`; existing lifecycle checkpoints persist the current bounded telemetry. No metrics database, remote telemetry service or retention worker is introduced.

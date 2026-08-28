@@ -44,7 +44,7 @@
 
 - profile state at dispatch (`enabled` / `frozen`)
 - start / finish time
-- PID / process group and RSS samples
+- PID / process group, the latest bounded RSS samples, and total count / last / peak RSS
 - JSONL lifecycle event index
 - stop request and observed outcome
 - token usage and cost-attribution state

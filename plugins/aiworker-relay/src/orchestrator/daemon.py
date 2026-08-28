@@ -52,6 +52,13 @@ from orchestrator.worktree import (
     changed_files,
     create_worktree,
     diff_text,
+    remove_worktree,
+)
+
+
+RSS_SAMPLE_LIMIT = 120
+DELETABLE_RUN_STATUSES = frozenset(
+    {"incomplete", "succeeded", "failed", "stopped", "stopped_forced", "unavailable"}
 )
 
 
@@ -683,6 +690,7 @@ class DaemonState:
         self._evidence: dict[str, EvidenceStore] = {}
         self._processes: dict[str, ManagedProcess] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._delete_lock = asyncio.Lock()
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._sse_clients = 0
         self._last_activity = time.monotonic()
@@ -1294,6 +1302,181 @@ class DaemonState:
                 active.append(record.run_id)
         return tuple(active)
 
+    def _deletion_paths(self, record: RunRecord) -> tuple[Path, Path]:
+        """Validate the exact on-disk identity of one run before deletion."""
+
+        run_id = record.run_id
+        if (
+            not isinstance(run_id, str)
+            or not run_id
+            or run_id in {".", ".."}
+            or Path(run_id).name != run_id
+        ):
+            raise APIError(
+                "run_delete_refused",
+                "run metadata contains an unsafe run id",
+                status=409,
+            )
+        if record.project_root != str(self.project_root):
+            raise APIError(
+                "run_delete_refused",
+                "run metadata belongs to a different project",
+                status=409,
+            )
+
+        runs_root = self.runs_root
+        worktrees_root = self.runtime_root / "worktrees"
+        run_dir = runs_root / run_id
+        worktree = worktrees_root / run_id
+        expected_worktree = str(worktree)
+        if record.worktree != expected_worktree:
+            raise APIError(
+                "run_delete_refused",
+                "run metadata has an unexpected worktree path",
+                status=409,
+            )
+
+        evidence = self._evidence.get(run_id)
+        if evidence is None or evidence.run_dir != run_dir:
+            raise APIError(
+                "run_delete_refused",
+                "run evidence metadata is unavailable or inconsistent",
+                status=409,
+            )
+
+        if any(
+            path.is_symlink()
+            for path in (self.runtime_root, runs_root, worktrees_root, run_dir, worktree)
+        ):
+            raise APIError(
+                "run_delete_refused",
+                "run data contains a symbolic link at a protected boundary",
+                status=409,
+            )
+        if not run_dir.is_dir() or not (run_dir / "run.json").is_file():
+            raise APIError(
+                "run_delete_refused",
+                "run evidence metadata is missing",
+                status=409,
+            )
+
+        try:
+            stored = read_json(run_dir / "run.json")
+            stored_record = (
+                RunRecord.from_dict(stored) if isinstance(stored, dict) else None
+            )
+        except (OSError, TypeError, ValueError, KeyError) as exc:
+            raise APIError(
+                "run_delete_refused",
+                "run evidence metadata is corrupt",
+                status=409,
+            ) from exc
+        if stored_record is None or any(
+            (
+                stored_record.run_id != record.run_id,
+                stored_record.project_root != record.project_root,
+                stored_record.worktree != record.worktree,
+                stored_record.status != record.status,
+            )
+        ):
+            raise APIError(
+                "run_delete_refused",
+                "run evidence metadata does not match the loaded record",
+                status=409,
+            )
+        return run_dir, worktree
+
+    def _assert_deletable(self, record: RunRecord) -> None:
+        """Reject active work before any filesystem or Git operation."""
+
+        if record.status not in DELETABLE_RUN_STATUSES:
+            raise APIError(
+                "run_not_deletable",
+                "only terminal runs can be deleted",
+                status=409,
+            )
+        task = self._tasks.get(record.run_id)
+        if task is not None and not task.done():
+            raise APIError(
+                "run_not_deletable",
+                "active run task must finish before deletion",
+                status=409,
+            )
+        process = self._processes.get(record.run_id)
+        if process is None:
+            return
+        try:
+            running = process.is_running()
+        except Exception as exc:
+            raise APIError(
+                "run_not_deletable",
+                "run process state could not be verified",
+                status=409,
+            ) from exc
+        if running:
+            raise APIError(
+                "run_not_deletable",
+                "active run process must exit before deletion",
+                status=409,
+            )
+
+    async def delete_run(self, run_id: str) -> dict[str, Any]:
+        """Delete one terminal run after Git-aware worktree cleanup."""
+
+        async with self._delete_lock:
+            record = self.records.get(run_id)
+            if record is None:
+                raise APIError("run_not_found", f"run not found: {run_id}", status=404)
+            self._assert_deletable(record)
+            run_dir, worktree = self._deletion_paths(record)
+
+            try:
+                await asyncio.to_thread(remove_worktree, self.project_root, worktree)
+            except WorktreeError as exc:
+                raise APIError(
+                    "run_delete_refused",
+                    f"Git worktree removal was refused: {exc}",
+                    status=409,
+                ) from exc
+            except OSError as exc:
+                raise APIError(
+                    "run_delete_failed",
+                    f"Git worktree removal failed: {exc}",
+                    status=500,
+                ) from exc
+
+            try:
+                await asyncio.to_thread(shutil.rmtree, run_dir)
+            except OSError as exc:
+                raise APIError(
+                    "run_delete_failed",
+                    f"run evidence removal failed: {exc}",
+                    status=500,
+                ) from exc
+
+            self.records.pop(run_id, None)
+            self._evidence.pop(run_id, None)
+            self._tasks.pop(run_id, None)
+            self._processes.pop(run_id, None)
+            self._lifecycle_changed.set()
+            await self._try_broadcast("run.deleted", run_id=run_id)
+            return {"deleted": [run_id], "failed": []}
+
+    async def delete_runs(self) -> dict[str, Any]:
+        """Attempt each loaded run independently for a batch delete."""
+
+        result: dict[str, Any] = {"deleted": [], "failed": []}
+        for run_id in tuple(self.records):
+            try:
+                await self.delete_run(run_id)
+            except APIError as exc:
+                result["failed"].append(
+                    {"run_id": run_id, "code": exc.code, "message": exc.message}
+                )
+            else:
+                result["deleted"].append(run_id)
+        return result
+
     def overview(self) -> dict[str, Any]:
         records = sorted(
             self.records.values(), key=lambda value: value.updated_at, reverse=True
@@ -1307,6 +1490,15 @@ class DaemonState:
             "active_run_ids": list(self.active_run_ids()),
             "native_workers": [dict(worker) for worker in NATIVE_WORKER_DECLARATIONS],
             "cost_attribution": "pending_or_unavailable",
+            "data_policy": {
+                "retention": "until_explicit_deletion",
+                "runtime_root": str(self.runtime_root),
+                "runs_root": str(self.runs_root),
+                "worktrees_root": str(self.runtime_root / "worktrees"),
+                "uninstall": "preserves_project_data",
+                "text_redaction": "exact_openrouter_key_only",
+                "raw_worktrees_sanitized": False,
+            },
         }
 
     def _key(self) -> str | None:
@@ -1656,17 +1848,18 @@ class DaemonState:
             async def sample(rss: int) -> None:
                 sample_value = {"at": utc_now(), "rss_bytes": rss}
                 record.rss_samples.append(sample_value)
-                errors = []
-                persist_error = self._try_persist(record)
-                if persist_error:
-                    errors.append(f"could not persist RSS sample: {persist_error}")
-                event_error = await self._try_event(evidence, "rss.sample", **sample_value)
-                if event_error:
-                    errors.append(f"could not write RSS event: {event_error}")
+                if len(record.rss_samples) > RSS_SAMPLE_LIMIT:
+                    del record.rss_samples[:-RSS_SAMPLE_LIMIT]
+                record.rss_sample_count += 1
+                record.rss_last_bytes = rss
+                record.rss_peak_bytes = (
+                    rss
+                    if record.rss_peak_bytes is None
+                    else max(record.rss_peak_bytes, rss)
+                )
                 await self._try_broadcast(
                     "run.rss", run_id=record.run_id, **sample_value
                 )
-                sample_errors.extend(errors)
 
             if not self.codex_path:
                 record.status = "unavailable"
@@ -2221,8 +2414,18 @@ async def _runs(request: web.Request) -> web.Response:
     state: DaemonState = request.app[STATE_KEY]
     if request.method == "GET":
         return web.json_response({"runs": state.overview()["runs"]})
+    if request.method == "DELETE":
+        await _json_body(request)
+        return web.json_response(await state.delete_runs())
     record = await state.create_run(await _json_body(request))
     return web.json_response(state._record_payload(record), status=201)
+
+
+async def _delete_run(request: web.Request) -> web.Response:
+    await _json_body(request)
+    return web.json_response(
+        await request.app[STATE_KEY].delete_run(request.match_info["run_id"])
+    )
 
 
 async def _stop(request: web.Request) -> web.Response:
@@ -2294,6 +2497,8 @@ def create_app(
     )
     app.router.add_get("/api/runs", _route(_runs))
     app.router.add_post("/api/runs", _route(_runs))
+    app.router.add_delete("/api/runs", _route(_runs))
+    app.router.add_delete("/api/runs/{run_id}", _route(_delete_run))
     app.router.add_post("/api/runs/{run_id}/stop", _route(_stop))
     app.router.add_post("/api/shutdown", _route(_shutdown))
     resolved_static_dir = app[STATIC_DIR_KEY]

@@ -39,6 +39,19 @@
       ? n.toLocaleString("en-US", { maximumFractionDigits: 4 })
       : "暂无";
   };
+  const fmtBytes = (v) => {
+    if (v === null || v === undefined || v === "") return "暂无";
+    const n = Number(v);
+    return Number.isFinite(n) ? `${n.toLocaleString("en-US")} B` : "暂无";
+  };
+  const deletableRunStates = new Set([
+    "incomplete",
+    "succeeded",
+    "failed",
+    "stopped",
+    "stopped_forced",
+    "unavailable",
+  ]);
   const stateText = {
     enabled: "已启用",
     frozen: "已冻结",
@@ -153,6 +166,17 @@
         : [],
     );
   }
+  function runDataControls(o) {
+    const policy = o.data_policy || {};
+    const root = policy.runtime_root || ".orch/";
+    const count = (o.runs || []).filter((run) =>
+      deletableRunStates.has(run.status),
+    ).length;
+    return `<section class="section">${card(
+      "本地数据",
+      `<p>运行证据、隔离环境和 worktree 保留在 <strong class="model-slug">${esc(root)}</strong>，直到你手动删除。Plugin 更新或卸载不会删除这些数据。</p>${count ? `<div style="margin-top:16px"><button class="button button-danger button-small" data-delete-runs>删除全部已结束数据</button></div>` : ""}`,
+    )}</section><dialog class="dialog" id="delete-runs-dialog"><div class="dialog-body"><h2>删除全部已结束数据？</h2><p>对应的运行证据和 detached worktree 将被永久删除；运行中的任务不会被删除。</p><div class="dialog-actions"><button class="button button-secondary" data-close-dialog>取消</button><button class="button button-danger" data-confirm-delete-runs>永久删除</button></div></div></dialog>`;
+  }
   function overviewNextStep(profiles, keyStatus) {
     if (!profiles.length) {
       return `<aside class="quiet-card"><h2>添加第一个 Worker</h2><p>先粘贴模型名并确认目录信息。连接 OpenRouter 可以随后完成。</p><a class="button" href="add-worker.html">添加 Worker</a></aside>`;
@@ -196,11 +220,11 @@
   }
   function renderRuns(o) {
     if (!o.runs.length) {
-      $("#content").innerHTML = `<section class="section">${runTable([])}</section>`;
+      $("#content").innerHTML = `<section class="section">${runTable([])}</section>${runDataControls(o)}`;
       return;
     }
     $("#content").innerHTML =
-      `<section class="section"><div class="filter-row"><div class="filter-group"><button class="filter" aria-pressed="true" data-run-filter="all">全部</button><button class="filter" aria-pressed="false" data-run-filter="active">运行中</button><button class="filter" aria-pressed="false" data-run-filter="done">已结束</button></div><span class="section-note">${o.runs.length} 条记录</span></div><div class="section" id="run-list">${runTable(o.runs)}</div></section>`;
+      `<section class="section"><div class="filter-row"><div class="filter-group"><button class="filter" aria-pressed="true" data-run-filter="all">全部</button><button class="filter" aria-pressed="false" data-run-filter="active">运行中</button><button class="filter" aria-pressed="false" data-run-filter="done">已结束</button></div><span class="section-note">${o.runs.length} 条记录</span></div><div class="section" id="run-list">${runTable(o.runs)}</div></section>${runDataControls(o)}`;
     document.addEventListener("click", (e) => {
       const b = e.target.closest("[data-run-filter]");
       if (!b) return;
@@ -251,6 +275,7 @@
       return;
     }
     const requestedProfile = new URLSearchParams(location.search).get("profile");
+    const dataRoot = (o.data_policy || {}).runtime_root || ".orch/";
     const profile =
       o.profiles.find((item) => item.id === requestedProfile) || o.profiles[0];
     const nextHref = profile
@@ -258,7 +283,7 @@
       : "add-worker.html";
     const nextLabel = profile ? "查看已保存 Worker" : "添加 Worker";
     $("#content").innerHTML =
-      `<section class="section profile-layout"><div class="card card-pad"><h2>OpenRouter Key</h2><p>密钥只保存在本机钥匙串中，不会回显到页面。</p><form class="form-grid" id="key-form"><div class="field"><label for="key">API Key</label><input id="key" name="key" type="password" autocomplete="off" placeholder="${k.configured ? "已配置，输入新 Key 可替换" : "sk-or-v1-…"}"><small>保存时会向 OpenRouter 验证有效性。具有管理权限的 Key 可在用量页读取账户总额；普通 Key 仍可用于 Worker 调用。</small></div><div class="field-actions"><button class="button" type="submit">保存 Key</button></div><div id="key-note" aria-live="polite"></div></form></div>${card("本地运行状态", `<div class="data-pair"><span>控制面</span><strong>由 Codex 启动</strong></div><div class="data-pair"><span>数据位置</span><strong>本机应用数据目录</strong></div>`)}</section>`;
+      `<section class="section profile-layout"><div class="card card-pad"><h2>OpenRouter Key</h2><p>密钥只保存在本机钥匙串中，不会回显到页面。</p><form class="form-grid" id="key-form"><div class="field"><label for="key">API Key</label><input id="key" name="key" type="password" autocomplete="off" placeholder="${k.configured ? "已配置，输入新 Key 可替换" : "sk-or-v1-…"}"><small>保存时会向 OpenRouter 验证有效性。具有管理权限的 Key 可在用量页读取账户总额；普通 Key 仍可用于 Worker 调用。</small></div><div class="field-actions"><button class="button" type="submit">保存 Key</button></div><div id="key-note" aria-live="polite"></div></form></div>${card("本地运行状态", `<div class="data-pair"><span>控制面</span><strong>由 Codex 启动</strong></div><div class="data-pair"><span>数据位置</span><strong class="model-slug">${esc(dataRoot)}</strong></div><div class="data-pair"><span>保留规则</span><strong>手动删除前一直保留</strong></div><p class="reference-foot">Plugin 更新或卸载不会删除项目运行数据。</p>`)}</section>`;
     $("#key-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const note = $("#key-note");
@@ -545,16 +570,19 @@
     }
     const active = activeRunIds(o).has(r.run_id);
     const awaitingForce = r.stop_outcome === "awaiting_force";
+    const deletable = !active && deletableRunStates.has(r.status);
     $("#content").innerHTML =
-      `<section class="section detail-layout"><div class="card run-detail"><div>${status(r.status)}</div><h2 class="run-title">${esc(r.model)}</h2><p class="run-subtitle">${esc(r.run_id)}</p><div class="run-actions">${awaitingForce ? `<button class="button button-danger" data-force-run="${esc(r.run_id)}">确认强制终止</button>` : active ? `<button class="button button-danger" data-stop-run="${esc(r.run_id)}">温和停止</button>` : ""}<a class="button button-secondary" href="runs.html">返回记录</a></div></div><aside class="card profile-card"><h2>运行信息</h2>${[
+      `<section class="section detail-layout"><div class="card run-detail"><div>${status(r.status)}</div><h2 class="run-title">${esc(r.model)}</h2><p class="run-subtitle">${esc(r.run_id)}</p><div class="run-actions">${awaitingForce ? `<button class="button button-danger" data-force-run="${esc(r.run_id)}">确认强制终止</button>` : active ? `<button class="button button-danger" data-stop-run="${esc(r.run_id)}">温和停止</button>` : ""}${deletable ? `<button class="button button-danger" data-delete-run="${esc(r.run_id)}">删除本地数据</button>` : ""}<a class="button button-secondary" href="runs.html">返回记录</a></div></div><aside class="card profile-card"><h2>运行信息</h2>${[
         ["推理偏好", r.reasoning_effort],
         ["进程", r.pid],
         [
           "RSS 采样",
-          r.rss_samples && r.rss_samples.length
-            ? r.rss_samples.length + " 次"
+          r.rss_sample_count || (r.rss_samples && r.rss_samples.length)
+            ? (r.rss_sample_count || r.rss_samples.length) + " 次"
             : "暂无",
         ],
+        ["RSS 最近", fmtBytes(r.rss_last_bytes)],
+        ["RSS 峰值", fmtBytes(r.rss_peak_bytes)],
         ["退出码", r.exit_code],
         ["工作区变更", r.dirty_workspace_excluded ? "已排除" : "暂无"],
         ["费用状态", r.cost_state],
@@ -575,7 +603,7 @@
               )
               .join("")
           : `<div class="empty">暂无产物记录。</div>`,
-      )}</section><dialog class="dialog" id="stop-dialog"><div class="dialog-body"><h2>结束这个任务？</h2><p>先请求温和停止；如果进程没有退出，再由你确认强制终止。</p><div class="dialog-actions"><button class="button button-secondary" data-close-dialog>取消</button><button class="button button-danger" data-confirm-stop="${esc(r.run_id)}">温和停止</button></div></div></dialog>`;
+      )}</section><dialog class="dialog" id="stop-dialog"><div class="dialog-body"><h2>结束这个任务？</h2><p>先请求温和停止；如果进程没有退出，再由你确认强制终止。</p><div class="dialog-actions"><button class="button button-secondary" data-close-dialog>取消</button><button class="button button-danger" data-confirm-stop="${esc(r.run_id)}">温和停止</button></div></div></dialog><dialog class="dialog" id="delete-run-dialog"><div class="dialog-body"><h2>删除这条运行数据？</h2><p>对应的运行证据和 detached worktree 将被永久删除。</p><div class="dialog-actions"><button class="button button-secondary" data-close-dialog>取消</button><button class="button button-danger" data-confirm-delete-run="${esc(r.run_id)}">永久删除</button></div></div></dialog>`;
   }
   async function boot() {
     document.body.innerHTML = shell(
@@ -671,6 +699,49 @@
         close.closest("dialog")?.close();
         return;
       }
+      const deleteRuns = e.target.closest("[data-delete-runs]");
+      if (deleteRuns) {
+        $("#delete-runs-dialog")?.showModal();
+        return;
+      }
+      const confirmDeleteRuns = e.target.closest("[data-confirm-delete-runs]");
+      if (confirmDeleteRuns) {
+        confirmDeleteRuns.disabled = true;
+        try {
+          const result = await api("/api/runs", {
+            method: "DELETE",
+            body: json({}),
+          });
+          if ((result.failed || []).length) {
+            alert(`已删除 ${(result.deleted || []).length} 条；${result.failed.length} 条未删除。`);
+          }
+          location.reload();
+        } catch (err) {
+          confirmDeleteRuns.disabled = false;
+          alert(err.message);
+        }
+        return;
+      }
+      const deleteRun = e.target.closest("[data-delete-run]");
+      if (deleteRun) {
+        $("#delete-run-dialog")?.showModal();
+        return;
+      }
+      const confirmDeleteRun = e.target.closest("[data-confirm-delete-run]");
+      if (confirmDeleteRun) {
+        confirmDeleteRun.disabled = true;
+        try {
+          await api(
+            "/api/runs/" + encodeURIComponent(confirmDeleteRun.dataset.confirmDeleteRun),
+            { method: "DELETE", body: json({}) },
+          );
+          location.href = "runs.html";
+        } catch (err) {
+          confirmDeleteRun.disabled = false;
+          alert(err.message);
+        }
+        return;
+      }
       const force = e.target.closest("[data-force-run]");
       if (force) {
         try {
@@ -723,6 +794,7 @@
       "run.created",
       "run.updated",
       "run.rss",
+      "run.deleted",
     ].forEach((n) =>
       s.addEventListener(n, () => {
         if (n !== "run.rss") location.reload();
