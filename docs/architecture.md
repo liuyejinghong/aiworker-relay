@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.18 为当前 pre-release 源码候选，已实现固定持久本机控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile。v0.1.17 已完成本机安装态收敛，但首次 NVIDIA run 在 Provider 前因 Codex 0.149 的 strict-config 动态 project-trust override 不兼容而失败；没有写文件或自动重试。v0.1.18 将 trust entry 写入隔离 run config，并收窄两个自定义 PATH 边界；安装态 Provider 回读仍待执行。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。无 Provider 哨兵已确认 source checkout、普通真实 HOME 路径和工具网络被拒绝，但当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。Profile 的 `verified` 晋级规则仍是独立待决产品问题。
+状态：v0.1.18 为当前已安装的 pre-release 源码候选，已实现固定持久本机控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile。v0.1.17 的首次 NVIDIA run 在 Provider 前因 Codex 0.149 strict-config 不接受动态 project-trust CLI override 而失败，没有写文件或自动重试；v0.1.18 修正后，run `b221a85785fd4cf6b618f07ca416068d` 已在 detached worktree 创建唯一 34-byte marker，diff/files 完整回读，并由受管 TERM 收敛为 `term_exited`、退出码 0。LaunchAgent 只带解析 Codex CLI/Node 所需的最小 `PATH`，不改写全局环境、Key 或 Profile。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
 
 ## 核心原则
 
