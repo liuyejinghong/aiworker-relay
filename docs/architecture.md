@@ -1,6 +1,6 @@
 # 目标架构
 
-状态：v0.1.19 为当前源码候选，精确 source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；v0.1.18 仍是本机真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。v0.1.19 在既有固定持久控制面、静态看板、Profile、隔离 run、证据路径、显式本地数据删除与 run-scoped permission profile 上，增加 bundle/runtime/daemon 的确定性 source fingerprint 收敛，以及 macOS arm64/x86_64、Python 3.12/3.13/3.14 的 hash-checked runtime locks。release-catalog 候选已把 Git-backed Plugin source 固定到该 SHA，并通过隔离 Codex CLI 安装；GitHub ruleset `21734294` 已对 `main` active 生效。尚未完成真实 Desktop/runtime、tag 或 Release。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
+状态：v0.1.19 为当前源码候选，精确 source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`。release catalog 已把 Git-backed Plugin source 固定到该 SHA，GitHub ruleset `21734294` 已对 `main` active 生效；真实用户 Codex Desktop 共享安装态已完成 `v0.1.19 → v0.1.18 → v0.1.19` 的空闲更新/回滚/恢复验收，最终 bundle/runtime/daemon 均为 v0.1.19 与 fingerprint `sha256:1acdaffa2c68a43379192a08b0bb19e776dd22d5850b641c09c6fda426bfb20b`，Key/Profile 未变。v0.1.18 的 NVIDIA write / TERM 证据继续作为 external-run 验收，本次更新链路没有派发任务。尚未创建 tag 或 Release。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation；Profile 的 `verified` 晋级规则仍是独立待决产品问题。
 
 ## 核心原则
 

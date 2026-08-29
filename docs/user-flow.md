@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1.19 为当前 release candidate，Git-backed catalog 候选把 Plugin source 固定到 reviewed commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`，并通过隔离 Codex CLI 安装；GitHub ruleset `21734294` 已对 `main` active 生效。尚未完成真实 Desktop/runtime、tag 或 Release。v0.1.18 仍是真实用户环境中已安装并完成 NVIDIA write / TERM 验收的 pre-release。固定持久本机看板、supervisor、派发、终态 run 数据删除、bounded RSS 与显式 permission profile 已实现；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
+状态：v0.1.19 为当前 release candidate，Git-backed catalog 把 Plugin source 固定到 reviewed commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；GitHub ruleset `21734294` 已对 `main` active 生效。真实用户 Codex Desktop 共享安装态已完成 v0.1.19 安装、exact v0.1.18 回滚与 v0.1.19 恢复，最终 Plugin 已安装并启用，runtime/daemon 与 bundle 一致，Key/Profile 未变。尚未创建 tag 或 Release。v0.1.18 的 NVIDIA write / TERM 证据继续作为 external-run 验收；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 
@@ -19,7 +19,7 @@ codex plugin marketplace add liuyejinghong/aiworker-relay --ref main --sparse .a
 codex plugin add aiworker-relay@aiworker-relay
 ```
 
-更新 marketplace snapshot 时使用 `codex plugin marketplace upgrade aiworker-relay`。该命令刷新 catalog，不等于静默替换 Desktop 已安装的版本化缓存副本；用户仍需在 Plugin 安装面接受 catalog 暴露的新 exact-SHA bundle。当前 CLI 流程已有历史实测，v0.1.19 immutable candidate 与 Desktop 的具体更新交互仍以本轮真实观察为准。用户不需要先安装独立 Web 产品，也不需要学习一组常用的派发命令。
+更新 marketplace snapshot 时使用 `codex plugin marketplace upgrade aiworker-relay`。该命令刷新 catalog，不等于静默替换 Desktop 已安装的版本化缓存副本；更新 installed entry 后仍要执行 `$aiworker-relay setup`，让应用级 runtime 收敛到同一 version 与 fingerprint。v0.1.19 已在真实用户共享的 Codex Desktop 配置/cache 中完成安装、精确回滚和恢复，Desktop Plugins Directory 最终人工确认其为已安装、已启用。该记录不把未操作的原生更新按钮写成既定流程。用户不需要先安装独立 Web 产品，也不需要学习常用的派发 CLI。
 
 ### 2. 在新 task 中完成 setup
 
@@ -78,7 +78,7 @@ codex plugin remove external-workers@aiworker-local
 
 该命令移除 Codex 的旧 Plugin 配置和缓存；不会删除本项目源码、用户应用数据目录中的运行时、系统钥匙串中的 OpenRouter Key，或项目 `.orch/`。AIworker Relay 不保留旧 Skill 名称作为长期兼容层；它将从新的 `aiworker-relay` marketplace 安装面提供。
 
-当前 runtime 更新规则见[更新与发布生命周期](update-lifecycle.md)：用户在获得新 Plugin bundle 后显式执行 `$aiworker-relay setup`；空闲 runtime 才会被可恢复地替换，活跃 external run 会让更新明确延后。Profile、钥匙串中的 Key 和项目 `.orch/` 证据不在这次替换中迁移或删除。Git marketplace 的 CLI bundle 更新已实测，仍不能仅根据命令名称推断未观察到的 Desktop UI 行为。
+当前 runtime 更新规则见[更新与发布生命周期](update-lifecycle.md)：用户在获得新 Plugin bundle 后显式执行 `$aiworker-relay setup`；空闲 runtime 才会被可恢复地替换，活跃 external run 会让更新明确延后。Profile、钥匙串中的 Key 和项目 `.orch/` 证据不在这次替换中迁移或删除。v0.1.19 的真实共享 Desktop 安装态已经完成一次安装、回滚和恢复；这只证明已观察到的 catalog/installed-entry/setup 路径及最终 Plugins Directory 状态，不扩展为未操作的 UI 控件语义。
 
 ## 第一次真正可接受的闭环
 
