@@ -1,6 +1,6 @@
 # 更新与发布生命周期
 
-状态：v0.1.19 的 reviewed Plugin source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；release catalog 已用 exact `sha` 指向它，并通过隔离 Codex CLI 与真实用户 Codex Desktop 共享安装态验收。2026-08-28 的空闲链路完成 `v0.1.19 安装 → exact v0.1.18 回滚 → v0.1.19 恢复`，最终 bundle/runtime/daemon 均为 v0.1.19，Key/Profile 未变，Desktop Plugins Directory 人工确认 Plugin 已安装并启用。v0.1.18 的 NVIDIA write / TERM 证据仍是独立 external-run 验收；本轮未派发任务。GitHub ruleset `21734294` 已对 `main` active 生效；尚未打 tag 或创建 GitHub Release。
+状态：v0.1.19 的 reviewed Plugin source 为 `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；release catalog 已用 exact `sha` 指向它，并通过隔离 Codex CLI 与真实用户 Codex Desktop 共享安装态验收。2026-08-28 的空闲链路完成 `v0.1.19 安装 → exact v0.1.18 回滚 → v0.1.19 恢复`，最终 bundle/runtime/daemon 均为 v0.1.19，Key/Profile 未变，Desktop Plugins Directory 人工确认 Plugin 已安装并启用。v0.1.18 的 NVIDIA write / TERM 证据仍是独立 external-run 验收；本轮未派发任务。GitHub ruleset `21734294` 已对 `main` active 生效；2026-08-29 已从该 reviewed source 创建 annotated tag 与 [GitHub developer pre-release](https://github.com/liuyejinghong/aiworker-relay/releases/tag/v0.1.19)。
 
 ## 为什么需要这一项
 
@@ -149,9 +149,11 @@ Git marketplace 的安装/更新验收必须作用于 Codex Desktop 实际共享
 
 公开 pre-release 源码已位于 [liuyejinghong/aiworker-relay](https://github.com/liuyejinghong/aiworker-relay)。2026-08-26 的干净隔离验收已实际执行上述安装路径，并从 `0.1.6` 连续升级至 `0.1.7`、`0.1.8`；推送后又从同一 Git marketplace 全新安装 `0.1.9`。2026-08-27 在新的隔离 `CODEX_HOME` 安装 `0.1.16` 后，其 launcher 的 `setup --no-open` 回读 bundle/runtime/daemon 版本一致、固定持久 endpoint 为空闲。2026-08-28 又在真实用户的共享 Codex Desktop 配置/cache 上安装 public v0.1.19、用临时 exact-SHA catalog 回滚到 v0.1.18，再刷新 public catalog 并恢复 v0.1.19；最终 Desktop 安装面与 runtime 身份一致。三次 setup 都复用同项目的唯一用户级控制面，没有创建第二个 daemon，也没有派发任务。本提案不添加自研 updater 来绕开 Codex 的安装面。
 
+2026-08-29 创建的 annotated tag `v0.1.19` 指向上述 reviewed Plugin source，而不是后续 catalog/docs commit；GitHub Release 明确标记为 Pre-release。tag 与 Release 是面向人的发布记录，安装与 runtime 身份仍由 catalog exact SHA、bundle fingerprint、dependency identity 和受保护 `main` 共同证明。
+
 ## 实施包与文件责任
 
-### P0 — 已在本地实现，待随公开 bundle 发布
+### P0 — 已随 v0.1.19 developer pre-release 发布
 
 | 所有权 | 最小变更 |
 | --- | --- |
@@ -178,8 +180,8 @@ active-run defer 与安装失败恢复已经由聚焦 runtime 测试覆盖，但
 ### 以后才处理的事项
 
 - Profile schema 真正变化时的显式迁移；
-- 发布渠道的公开目录提交；
-- 具有业务价值的 release notes / 兼容性提示；
+- 后续 Plugin source 的 catalog SHA 前移；
+- 后续版本具有业务价值的 release notes / 兼容性提示；
 - 多项目控制面的产品决策；
 - 本地模型或第二 provider 的运行时。
 
