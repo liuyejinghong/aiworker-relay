@@ -1,6 +1,6 @@
 # 新用户使用流程
 
-状态：v0.1.19 为当前 release candidate，Git-backed catalog 把 Plugin source 固定到 reviewed commit `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；GitHub ruleset `21734294` 已对 `main` active 生效。真实用户 Codex Desktop 共享安装态已完成 v0.1.19 安装、exact v0.1.18 回滚与 v0.1.19 恢复，最终 Plugin 已安装并启用，runtime/daemon 与 bundle 一致，Key/Profile 未变。尚未创建 tag 或 Release。v0.1.18 的 NVIDIA write / TERM 证据继续作为 external-run 验收；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
+状态：v0.1.19 已作为 [GitHub developer pre-release](https://github.com/liuyejinghong/aiworker-relay/releases/tag/v0.1.19) 发布；annotated tag 与 Git-backed catalog 都指向 reviewed Plugin source `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`，GitHub ruleset `21734294` 已对 `main` active 生效。真实用户 Codex Desktop 共享安装态已完成 v0.1.19 安装、exact v0.1.18 回滚与 v0.1.19 恢复，最终 Plugin 已安装并启用，runtime/daemon 与 bundle 一致，Key/Profile 未变。v0.1.18 的 NVIDIA write / TERM 证据继续作为 external-run 验收；当前 macOS Codex 普通 shell 仍可访问 host temp，NVIDIA Profile 也不会因一次窄验收静默晋级。
 
 ![新用户流程](../diagrams/aiworker-new-user-flow.svg)
 

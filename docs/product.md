@@ -1,6 +1,6 @@
 # 产品定义：Codex 外部 Worker Plugin
 
-状态：v0.1.19 为当前源码候选，并已在真实用户 Codex Desktop 共享安装态完成 `v0.1.19 → v0.1.18 → v0.1.19` 的空闲更新/回滚/恢复验收；最终 Plugin 已安装并启用，bundle/runtime/daemon 一致，Key/Profile 保持不变。v0.1.18 的用户授权 run `b221a85785fd4cf6b618f07ca416068d` 继续提供真实 NVIDIA write / TERM 证据；本次更新链路没有派发任务、切换模型或改变 Profile。v0.1.19 仍未打 tag 或创建 GitHub Release。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。NVIDIA Profile 的 `verified` 晋级仍依赖尚未接受的能力标准，不能静默变更。
+状态：v0.1.19 已作为 [GitHub developer pre-release](https://github.com/liuyejinghong/aiworker-relay/releases/tag/v0.1.19) 发布，annotated tag 指向 reviewed Plugin source `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；它已在真实用户 Codex Desktop 共享安装态完成 `v0.1.19 → v0.1.18 → v0.1.19` 的空闲更新/回滚/恢复验收，最终 Plugin 已安装并启用，bundle/runtime/daemon 一致，Key/Profile 保持不变。v0.1.18 的用户授权 run `b221a85785fd4cf6b618f07ca416068d` 继续提供真实 NVIDIA write / TERM 证据；本次更新链路没有派发任务、切换模型或改变 Profile。当前 macOS Codex 普通 shell 仍可访问 host temp，因此不声明完整 host isolation。NVIDIA Profile 的 `verified` 晋级仍依赖尚未接受的能力标准，不能静默变更。
 
 ## 一句话
 

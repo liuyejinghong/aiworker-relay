@@ -141,6 +141,16 @@ v0.1.19 另修正同 version / 不同 source 仍被判为 `up_to_date` 的更新
 
 结论：v0.1.19 的 immutable Git source、共享 Desktop Plugin 安装态、应用级 runtime 与 daemon identity 已完成一次可逆的真实用户链路闭环；用户 Key/Profile 得到保留。active-run defer 与安装失败恢复已有聚焦 runtime 测试，但本次 Desktop 验收刻意保持空闲，没有为重复证明代码合同而派发任务或注入失败。
 
+## 2026-08-29 v0.1.19 developer pre-release 发布
+
+| 验证点 | 结果 | 证据与边界 |
+| --- | --- | --- |
+| annotated tag 与 Release | 通过 | annotated tag `v0.1.19` 指向 reviewed Plugin source `89d8d564c80cd4de59d7908a6a7114f4c2d03f54`；[GitHub Release](https://github.com/liuyejinghong/aiworker-relay/releases/tag/v0.1.19) 明确标记为 Pre-release。tag 是面向人的发布记录，catalog exact SHA 仍是安装 source authority。 |
+| 验收文档落地 | 通过 | PR #40 以 merge commit `eef715e6545a22bf7bcc9a5e310c0c307d9160cd` 落到受保护 `main`；main CI run `33238052323` 的六个 macOS/Python job 全部成功。 |
+| Issue #8 收敛 | 通过 | immutable catalog、required checks、active ruleset、source/runtime/dependency identity 与真实 Desktop 安装/回滚/恢复证据均已落地，因此 mutable/ungated distribution finding 已按 completed 关闭。host temp 限制继续独立保留在 Issue #2，不因发布而弱化或隐藏。 |
+
+本次发布没有改写 Plugin source、Key、Profile、模型或 reasoning，也没有派发 external run。v0.1.19 保持 developer pre-release；完整 host isolation 与 stable release 声明仍不成立。
+
 ## 已验证结论
 
 1. 使用独立 `CODEX_HOME` 的 Codex CLI 可以真实地走 OpenRouter 调用 Ox Alpha，不需要自己实现模型 SDK 或 agent loop。
